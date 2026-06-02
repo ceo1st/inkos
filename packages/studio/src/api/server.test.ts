@@ -3439,4 +3439,21 @@ describe("createStudioServer daemon lifecycle", () => {
     expect([400, 404]).toContain(res.status);
   });
 
+  it("chapter-review-mode defaults to auto and round-trips a manual setting (C4a)", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const initial = await app.request("http://localhost/api/v1/project/chapter-review-mode");
+    await expect(initial.json()).resolves.toMatchObject({ mode: "auto" });
+
+    const put = await app.request("http://localhost/api/v1/project/chapter-review-mode", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "manual" }),
+    });
+    await expect(put.json()).resolves.toMatchObject({ ok: true, mode: "manual" });
+
+    const after = await app.request("http://localhost/api/v1/project/chapter-review-mode");
+    await expect(after.json()).resolves.toMatchObject({ mode: "manual" });
+  });
+
 });

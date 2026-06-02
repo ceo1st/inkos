@@ -1469,6 +1469,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       defaultLLMConfig: currentConfig.llm,
       foundationReviewRetries: currentConfig.foundation?.reviewRetries ?? 2,
       writingReviewRetries: currentConfig.writing?.reviewRetries ?? 1,
+      chapterReviewMode: (currentConfig.writing as { readonly reviewMode?: string } | undefined)?.reviewMode === "manual" ? "manual" : "auto",
       modelOverrides: currentConfig.modelOverrides,
       notifyChannels: currentConfig.notify,
       logger,
@@ -3535,6 +3536,24 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const { writeFile: writeFileFs } = await import("node:fs/promises");
     await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
     return c.json({ ok: true });
+  });
+
+  // --- Chapter review mode (C4a: auto pipeline vs manual checkpoint) ---
+
+  app.get("/api/v1/project/chapter-review-mode", async (c) => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    return c.json({ mode: raw.writing?.reviewMode === "manual" ? "manual" : "auto" });
+  });
+
+  app.put("/api/v1/project/chapter-review-mode", async (c) => {
+    const { mode } = await c.req.json<{ mode?: string }>();
+    const next = mode === "manual" ? "manual" : "auto";
+    const configPath = join(root, "inkos.json");
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
+    raw.writing = { ...(raw.writing ?? {}), reviewMode: next };
+    const { writeFile: writeFileFs } = await import("node:fs/promises");
+    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    return c.json({ ok: true, mode: next });
   });
 
   // --- Notify channels ---
