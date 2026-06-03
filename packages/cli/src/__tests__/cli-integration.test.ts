@@ -216,7 +216,7 @@ describe("CLI integration", () => {
   });
 
   describe("inkos interact", () => {
-    it("returns structured JSON for shared interaction mode switches", async () => {
+    it("returns the agent-session JSON contract for natural-language interactions", async () => {
       const initialized = await stat(join(projectDir, "inkos.json")).then(() => true).catch(() => false);
       if (!initialized) run(["init"]);
       const envPath = join(projectDir, ".env");
@@ -230,9 +230,11 @@ describe("CLI integration", () => {
         const output = run(["interact", "--json", "--message", "切换到全自动"]);
         const data = JSON.parse(output);
 
-        expect(data.request.intent).toBe("switch_mode");
-        expect(data.request.mode).toBe("auto");
-        expect(data.session.automationMode).toBe("auto");
+        expect(data.request).toBeUndefined();
+        expect(data.responseText).toEqual(expect.any(String));
+        expect(data.session).toEqual(expect.objectContaining({
+          sessionKind: "chat",
+        }));
       } finally {
         await writeFile(envPath, originalEnv, "utf-8");
       }

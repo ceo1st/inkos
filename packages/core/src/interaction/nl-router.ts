@@ -70,14 +70,6 @@ export function routeNaturalLanguageIntent(
     };
   }
 
-  const modeCommand = trimmed.match(/^\/mode\s+(auto|semi|manual)$/i);
-  if (modeCommand) {
-    return {
-      intent: "switch_mode",
-      mode: modeCommand[1]!.toLowerCase() as "auto" | "semi" | "manual",
-    };
-  }
-
   const slashRewrite = trimmed.match(/^\/rewrite\s+(\d+)$/i);
   if (slashRewrite) {
     return {

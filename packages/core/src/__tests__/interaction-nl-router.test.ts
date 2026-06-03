@@ -84,10 +84,6 @@ describe("interaction natural-language router", () => {
       intent: "write_next",
       bookId: "harbor",
     });
-    expect(routeNaturalLanguageIntent("/mode auto", { activeBookId: "harbor" })).toEqual({
-      intent: "switch_mode",
-      mode: "auto",
-    });
     expect(routeNaturalLanguageIntent("/rewrite 3", { activeBookId: "harbor" })).toEqual({
       intent: "rewrite_chapter",
       bookId: "harbor",
