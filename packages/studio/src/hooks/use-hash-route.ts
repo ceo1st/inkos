@@ -7,6 +7,7 @@ export type HashRoute =
   | { page: "book-settings"; bookId: string }
   | { page: "book-create" }
   | { page: "services" }
+  | { page: "project-settings" }
   | { page: "service-detail"; serviceId: string }
   | { page: "chapter"; bookId: string; chapterNumber: number }
   | { page: "analytics"; bookId: string }
@@ -15,7 +16,7 @@ export type HashRoute =
   | { page: "logs" }
   | { page: "genres" }
   | { page: "style" }
-  | { page: "import" }
+  | { page: "import"; tab?: "chapters" | "canon" | "fanfic" }
   | { page: "radar" }
   | { page: "doctor" };
 
@@ -25,6 +26,10 @@ function parseHash(hash: string): HashRoute {
   if (!path || path === "/") return { page: "dashboard" };
   if (path === "chat") return { page: "chat" };
   if (path === "config" || path === "services") return { page: "services" };
+  if (path === "settings") return { page: "project-settings" };
+  if (path === "import") return { page: "import" };
+  const importMatch = path.match(/^import\/(chapters|canon|fanfic)$/);
+  if (importMatch) return { page: "import", tab: importMatch[1] as "chapters" | "canon" | "fanfic" };
   if (path === "book/new") return { page: "book-create" };
 
   const serviceMatch = path.match(/^services\/([^/]+)$/);
@@ -47,6 +52,8 @@ function routeToHash(route: HashRoute): string {
     case "book-settings": return `#/book/${encodeURIComponent(route.bookId)}/settings`;
     case "book-create": return "#/book/new";
     case "services": return "#/services";
+    case "project-settings": return "#/settings";
+    case "import": return route.tab ? `#/import/${route.tab}` : "#/import";
     case "service-detail": return `#/services/${encodeURIComponent(route.serviceId)}`;
     default: return "";
   }
@@ -54,7 +61,7 @@ function routeToHash(route: HashRoute): string {
 
 export { parseHash, routeToHash }; // for testing
 
-const HASH_PAGES = new Set(["dashboard", "chat", "book", "book-settings", "book-create", "services", "service-detail"]);
+const HASH_PAGES = new Set(["dashboard", "chat", "book", "book-settings", "book-create", "services", "project-settings", "service-detail", "import"]);
 
 export function useHashRoute() {
   const [route, setRouteState] = useState<HashRoute>(() => parseHash(window.location.hash));

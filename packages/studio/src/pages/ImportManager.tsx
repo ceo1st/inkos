@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchJson, useApi, postApi } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
@@ -15,11 +15,11 @@ interface Nav { toDashboard: () => void }
 
 type Tab = "chapters" | "canon" | "fanfic";
 
-export function ImportManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
+export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: Theme; t: TFunction; initialTab?: Tab }) {
   const c = useColors(theme);
   const { lang } = useI18n();
   const { data: booksData } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
-  const [tab, setTab] = useState<Tab>("chapters");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "chapters");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -38,6 +38,13 @@ export function ImportManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TF
   const [ffMode, setFfMode] = useState("canon");
   const [ffGenre, setFfGenre] = useState("other");
   const [ffLang, setFfLang] = useState(lang);
+
+  useEffect(() => {
+    if (initialTab) {
+      setTab(initialTab);
+      setStatus("");
+    }
+  }, [initialTab]);
 
   const handleImportChapters = async () => {
     if (!chText.trim() || !chBookId) return;

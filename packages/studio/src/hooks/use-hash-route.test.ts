@@ -39,8 +39,16 @@ describe("hash route", () => {
       expect(parseHash("#/services")).toEqual({ page: "services" });
     });
 
+    it("parses project settings", () => {
+      expect(parseHash("#/settings")).toEqual({ page: "project-settings" });
+    });
+
     it("parses service-detail", () => {
       expect(parseHash("#/services/openai")).toEqual({ page: "service-detail", serviceId: "openai" });
+    });
+
+    it("parses import tab routes", () => {
+      expect(parseHash("#/import/fanfic")).toEqual({ page: "import", tab: "fanfic" });
     });
 
     it("decodes encoded serviceId", () => {
@@ -83,8 +91,16 @@ describe("hash route", () => {
       expect(routeToHash({ page: "services" })).toBe("#/services");
     });
 
+    it("project-settings -> #/settings", () => {
+      expect(routeToHash({ page: "project-settings" })).toBe("#/settings");
+    });
+
     it("service-detail -> #/services/{id}", () => {
       expect(routeToHash({ page: "service-detail", serviceId: "openai" })).toBe("#/services/openai");
+    });
+
+    it("import tab -> #/import/{tab}", () => {
+      expect(routeToHash({ page: "import", tab: "chapters" })).toBe("#/import/chapters");
     });
 
     it("encodes Chinese serviceId", () => {

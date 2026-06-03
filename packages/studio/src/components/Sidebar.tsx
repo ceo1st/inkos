@@ -28,11 +28,14 @@ import {
   Gamepad2,
   ScrollText,
   BookPlus,
+  BookCopy,
   Boxes,
+  Feather,
   Wand2,
   FileInput,
   TrendingUp,
   Stethoscope,
+  Zap,
   FolderOpen,
   ChevronRight,
   Loader2,
@@ -66,11 +69,12 @@ interface Nav {
   toBook: (id: string) => void;
   toBookCreate: () => void;
   toServices: () => void;
+  toProjectSettings: () => void;
   toDaemon: () => void;
   toLogs: () => void;
   toGenres: () => void;
   toStyle: () => void;
-  toImport: () => void;
+  toImport: (tab?: "chapters" | "canon" | "fanfic") => void;
   toRadar: () => void;
   toDoctor: () => void;
 }
@@ -301,6 +305,40 @@ export function Sidebar({ nav, activePage, sse, t }: {
               <Gamepad2 size={16} className="text-muted-foreground" />
               <span className="flex-1">{t("nav.createPlay")}</span>
             </button>
+            <div className="grid grid-cols-2 gap-1 pt-1">
+              <button
+                type="button"
+                onClick={() => nav.toImport("fanfic")}
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
+              >
+                <Feather size={14} />
+                <span>{t("nav.createFanfic")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => nav.toImport("chapters")}
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
+              >
+                <FileInput size={14} />
+                <span>{t("nav.createContinuation")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => nav.toImport("canon")}
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
+              >
+                <BookCopy size={14} />
+                <span>{t("nav.createSpinoff")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={nav.toStyle}
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
+              >
+                <Wand2 size={14} />
+                <span>{t("nav.createImitation")}</span>
+              </button>
+            </div>
           </div>
 
           <div className="space-y-0.5">
@@ -526,14 +564,20 @@ export function Sidebar({ nav, activePage, sse, t }: {
               active={activePage === "services"}
               onClick={nav.toServices}
             />
-{/*            <SidebarItem
+            <SidebarItem
+              label={t("nav.projectSettings")}
+              icon={<Settings size={16} />}
+              active={activePage === "project-settings"}
+              onClick={nav.toProjectSettings}
+            />
+            <SidebarItem
               label={t("nav.daemon")}
               icon={<Zap size={16} />}
               active={activePage === "daemon"}
               onClick={nav.toDaemon}
               badge={daemon?.running ? t("nav.running") : undefined}
               badgeColor={daemon?.running ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground"}
-            />*/}
+            />
             <SidebarItem
               label={t("nav.logs")}
               icon={<Terminal size={16} />}

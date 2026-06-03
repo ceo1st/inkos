@@ -9,7 +9,12 @@ const strings = {
   "nav.createNovel": { zh: "InkOS 小说", en: "InkOS Novel" },
   "nav.createShort": { zh: "InkOS 短篇", en: "InkOS Short" },
   "nav.createPlay": { zh: "InkOS 互动", en: "InkOS Play" },
+  "nav.createFanfic": { zh: "同人", en: "Fanfic" },
+  "nav.createContinuation": { zh: "续写", en: "Continue" },
+  "nav.createSpinoff": { zh: "番外", en: "Spinoff" },
+  "nav.createImitation": { zh: "仿写", en: "Imitate" },
   "nav.config": { zh: "模型配置", en: "Model Config" },
+  "nav.projectSettings": { zh: "项目设置", en: "Project Settings" },
   "nav.connected": { zh: "已连接", en: "Connected" },
   "nav.disconnected": { zh: "未连接", en: "Disconnected" },
 
@@ -209,6 +214,20 @@ const strings = {
   "config.edit": { zh: "编辑", en: "Edit" },
   "config.enabled": { zh: "启用", en: "Enabled" },
   "config.disabled": { zh: "禁用", en: "Disabled" },
+
+  // Project Settings
+  "settings.title": { zh: "项目设置", en: "Project Settings" },
+  "settings.subtitle": { zh: "集中管理写作运行时的项目级开关，不替代模型服务商配置。", en: "Manage project-level runtime switches without replacing model service configuration." },
+  "settings.inputGovernance": { zh: "输入治理", en: "Input Governance" },
+  "settings.inputGovernanceHint": { zh: "控制 planner/composer 对用户意图、约束和上下文的组装方式。", en: "Controls how planner/composer assemble user intent, constraints, and context." },
+  "settings.modelOverrides": { zh: "Agent 模型路由", en: "Agent Model Routing" },
+  "settings.modelOverridesHint": { zh: "按 agent 覆盖模型。这里保存 JSON；服务商、密钥和基础 URL 仍在模型配置页管理。", en: "Override models by agent. This saves JSON; providers, keys, and base URLs stay in Model Config." },
+  "settings.notify": { zh: "通知渠道", en: "Notification Channels" },
+  "settings.notifyHint": { zh: "配置 Telegram、飞书、企微或 webhook 等后台通知渠道。", en: "Configure Telegram, Feishu, WeCom, or webhook notifications for background jobs." },
+  "settings.detection": { zh: "AI 检测配置", en: "AI Detection Config" },
+  "settings.detectionHint": { zh: "配置外部检测服务、阈值和自动改写策略；填 null 可清空。", en: "Configure external detection service, threshold, and auto-rewrite policy; use null to clear." },
+  "settings.openModelConfig": { zh: "打开模型配置", en: "Open Model Config" },
+  "settings.saved": { zh: "已保存", en: "Saved" },
 
   // Truth Files extras
   "truth.title": { zh: "真相文件", en: "Truth Files" },
