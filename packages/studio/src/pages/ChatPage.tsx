@@ -111,6 +111,10 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
     [currentSessionKind, playMode, messages],
   );
   const showChoicePanel = playMode === "guided" && playChoices.length > 0;
+  // World panel (holdings / state / relations) defaults collapsed; the scene
+  // image and choices live in the chat center now, opened on demand.
+  const [worldPanelOpen, setWorldPanelOpen] = useState(false);
+  const [playSceneImageUrl, setPlaySceneImageUrl] = useState<string | undefined>(undefined);
 
   // Derived: is the assistant currently streaming/thinking/executing tools?
   const isStreaming = useMemo(() => {
@@ -526,16 +530,31 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
         </div>
       )}
 
-      {/* Bottom: pick-playstyle hides input; play choices are shortcuts, not a replacement for free actions. */}
-      {!needsPlayModeChoice && showChoicePanel && (
-        <PlayChoicePanel
-          choices={playChoices}
-          disabled={loading || !activeSessionId}
-          isZh={isZh}
-          onChoose={(action) => {
-            if (activeSessionId) void sendMessage(activeSessionId, action, { activeBookId, sessionKind: "play", actionSource: "button" });
-          }}
-        />
+      {/* Play focus: the current scene image sits centered in the chat, choices
+          directly beneath it. pick-playstyle hides this; choices are shortcuts,
+          not a replacement for free actions. */}
+      {currentSessionKind === "play" && !needsPlayModeChoice && (playSceneImageUrl || showChoicePanel) && (
+        <div className="shrink-0">
+          {playSceneImageUrl ? (
+            <div className="flex justify-center px-4 pt-3">
+              <img
+                src={playSceneImageUrl}
+                alt={isZh ? "本幕配图" : "This moment"}
+                className="max-h-[40vh] w-auto max-w-3xl rounded-xl border border-border/40 object-contain shadow-lg"
+              />
+            </div>
+          ) : null}
+          {showChoicePanel && (
+            <PlayChoicePanel
+              choices={playChoices}
+              disabled={loading || !activeSessionId}
+              isZh={isZh}
+              onChoose={(action) => {
+                if (activeSessionId) void sendMessage(activeSessionId, action, { activeBookId, sessionKind: "play", actionSource: "button" });
+              }}
+            />
+          )}
+        </div>
       )}
       {needsPlayModeChoice ? null : (
       <div className="shrink-0 border-t border-border/40 px-4 py-3">
@@ -588,6 +607,17 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
                     配置模型 →
                   </button>
                 )}
+                {currentSessionKind === "play" && (
+                  <button
+                    type="button"
+                    onClick={() => setWorldPanelOpen((v) => !v)}
+                    className={`ml-auto flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${worldPanelOpen ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted hover:text-primary"}`}
+                    title={isZh ? "世界面板：持有 / 状态 / 关系" : "World panel: holdings / state / relations"}
+                  >
+                    <Gamepad2 size={14} />
+                    {isZh ? "世界" : "World"}
+                  </button>
+                )}
               </div>
             </div>
         </div>
@@ -599,6 +629,9 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
           sessionId={activeSessionId}
           isStreaming={loading}
           isZh={isZh}
+          open={worldPanelOpen}
+          onClose={() => setWorldPanelOpen(false)}
+          onSceneImageUrl={setPlaySceneImageUrl}
           sessionTitle={activeSession?.title ?? null}
         />
       )}

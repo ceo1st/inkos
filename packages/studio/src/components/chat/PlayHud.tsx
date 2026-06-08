@@ -320,33 +320,33 @@ export function PlayHud(props: {
   readonly sessionId: string;
   readonly isStreaming: boolean;
   readonly isZh: boolean;
+  readonly open: boolean;
+  readonly onClose: () => void;
   readonly sessionTitle?: string | null;
+  // Reports the current turn's scene image up so the chat can render it centrally.
+  readonly onSceneImageUrl?: (url: string | undefined) => void;
 }) {
-  const { sessionId, isStreaming, isZh } = props;
+  const { sessionId, isStreaming, isZh, open, onClose, onSceneImageUrl } = props;
   const base = `/play/runs/${encodeURIComponent(sessionId)}/main`;
-  const [open, setOpen] = useState(true);
   const [selectedHoldingId, setSelectedHoldingId] = useState<string | null>(null);
   const [run, setRun] = useState<PlayRunResponse | null>(null);
-  const [hasUnseen, setHasUnseen] = useState(false);
   const [settings, setSettings] = useState<PlayImageSettings>({ actors: false, moments: false, inventory: false });
   const [coverReady, setCoverReady] = useState(false);
   const [generating, setGenerating] = useState<ReadonlySet<string>>(new Set());
   const inFlight = useRef<Set<string>>(new Set());
-  const openRef = useRef(open);
   const prevStreaming = useRef(isStreaming);
-  openRef.current = open;
 
   const load = useCallback(async () => {
     try {
       const data = await fetchJson<PlayRunResponse>(base);
       setRun(data);
       if (data.imageSettings) setSettings(data.imageSettings);
-      if (!openRef.current) setHasUnseen(true);
+      onSceneImageUrl?.(data.sceneImageUrl);
     } catch {
       // A play session may not have a persisted world yet (no first action).
       // Leaving run null renders the empty state; do not surface an error.
     }
-  }, [base]);
+  }, [base, onSceneImageUrl]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -422,19 +422,9 @@ export function PlayHud(props: {
 
   const title = props.sessionTitle?.trim() || run?.title?.trim() || (isZh ? "互动世界" : "Play World");
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => { setOpen(true); setHasUnseen(false); }}
-        className="absolute right-3 top-3 z-20 flex items-center gap-1.5 rounded-lg border border-border/40 bg-card/90 px-2.5 py-1.5 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur hover:text-primary"
-        title={isZh ? "打开世界面板" : "Open world panel"}
-      >
-        <Gamepad2 size={14} />
-        {hasUnseen && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-      </button>
-    );
-  }
+  // Collapsed: render nothing (the chat input row owns the prominent toggle).
+  // Hooks above still run, so the run keeps polling and reporting the scene image.
+  if (!open) return null;
 
   return (
     <aside className="absolute bottom-28 right-0 top-0 z-20 flex w-[330px] flex-col border-l border-border/40 bg-card/95 backdrop-blur shadow-xl">
@@ -463,7 +453,7 @@ export function PlayHud(props: {
             {view.time.value}
           </span>
         ) : null}
-        <button type="button" onClick={() => { setOpen(false); setSelectedHoldingId(null); }} className="shrink-0 text-muted-foreground hover:text-foreground" title={isZh ? "收起" : "Collapse"}>
+        <button type="button" onClick={() => { onClose(); setSelectedHoldingId(null); }} className="shrink-0 text-muted-foreground hover:text-foreground" title={isZh ? "收起" : "Collapse"}>
           <X size={15} />
         </button>
       </header>
@@ -488,13 +478,6 @@ export function PlayHud(props: {
           />
         ) : (
           <>
-            {run?.sceneImageUrl && (
-              <img
-                src={run.sceneImageUrl}
-                alt={isZh ? "本幕配图" : "This moment"}
-                className="w-full rounded-lg border border-border/30 object-cover"
-              />
-            )}
             {view.time && (view.time.note || view.time.details.length > 0) ? (
               <Zone
                 title={isZh ? "世界时间" : "World time"}
