@@ -41,4 +41,15 @@ describe("authoring-store", () => {
     const snaps = await readdir(join(root, "interactive-films", "p", "snapshots"));
     expect(snaps.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("serializes concurrent applyGraphDelta calls without losing updates", async () => {
+    await Promise.all([
+      applyGraphDelta({ projectRoot: root, projectId: "p", delta: StoryGraphDeltaSchema.parse({ variables: { upsert: [{ name: "a", type: "counter", default: 0, desc: "" }] } }) }),
+      applyGraphDelta({ projectRoot: root, projectId: "p", delta: StoryGraphDeltaSchema.parse({ variables: { upsert: [{ name: "b", type: "counter", default: 0, desc: "" }] } }) }),
+    ]);
+    const graph = await loadStoryGraph(root, "p");
+    expect(graph?.variables.map(v => v.name).sort()).toEqual(["a", "b"]); // both landed, no lost update
+    const state = await loadAuthoringState(root, "p");
+    expect(state.rev).toBe(2); // two distinct revs, not 1
+  });
 });

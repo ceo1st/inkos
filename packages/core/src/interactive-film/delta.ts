@@ -37,6 +37,11 @@ function applyUpsertRemove<T>(
   return [...map.values()];
 }
 
+/**
+ * Returns a new StoryGraph with the delta applied. The returned graph shares
+ * element references with the input; callers must treat it as immutable —
+ * do not mutate nodes/arrays in place.
+ */
 export function applyStoryGraphDelta(params: {
   graph: StoryGraph;
   delta: StoryGraphDelta;
