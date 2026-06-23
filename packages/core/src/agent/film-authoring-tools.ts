@@ -4,13 +4,16 @@ import { applyGraphDelta } from "../interactive-film/authoring-store.js";
 import { chatCompletion, type LLMClient } from "../llm/provider.js";
 import { loadStoryGraph } from "../interactive-film/graph-store.js";
 import { buildFilmAuthoringContext } from "../interactive-film/film-context.js";
-import { buildFillNodeDeltaFromLLMText } from "../interactive-film/authoring-generate.js";
+import { buildFillNodeDeltaFromLLMText, buildStructureDeltaFromLLMText } from "../interactive-film/authoring-generate.js";
 import {
   buildWorldAnchorDelta,
   buildAddVariableDelta,
   buildDefineEndingDelta,
   buildUpsertCharactersDelta,
+  buildConnectChoiceDelta,
+  buildRemoveNodeDelta,
 } from "../interactive-film/authoring-tools.js";
+import { StoryNodeSchema } from "../interactive-film/graph-schema.js";
 import { writeCharacterFacts } from "../interactive-film/memory-link.js";
 import { MemoryDB } from "../state/memory-db.js";
 import { join } from "node:path";
@@ -225,4 +228,83 @@ export function createReviseNodeTool(
 
 export function filmLLMDepsFromClient(client: LLMClient, model: string): FilmLLMDeps {
   return { chat: defaultChat(client, model) };
+}
+
+// ---------------------------------------------------------------------------
+// draft_structure — confirm-class: LLM → buildStructureDeltaFromLLMText → apply
+// ---------------------------------------------------------------------------
+
+const DraftStructureParams = Type.Object({
+  instruction: Type.String({ description: "what skeleton to draft (acts, branch points, endings)" }),
+});
+
+const STRUCT_SYSTEM = `你是互动影游编剧。根据上下文与指令，生成分支骨架 JSON：{ "nodes": [StoryNode...] }。恰好 1 个 type=start，至少 2 个 branch，至少 2 个差异化 ending 节点；每条路径都能到某个 ending；只输出 JSON。`;
+
+export function createDraftStructureTool(
+  projectRoot: string,
+  projectId: string,
+  deps: FilmLLMDeps,
+): AgentTool<typeof DraftStructureParams> {
+  return {
+    name: "draft_structure",
+    description: "interactive-film authoring: draft the branching node skeleton + topology. Structural — requires user confirmation.",
+    label: "Draft Structure",
+    parameters: DraftStructureParams,
+    async execute(_id, params: Static<typeof DraftStructureParams>) {
+      const graph = await loadStoryGraph(projectRoot, projectId);
+      const context = graph ? buildFilmAuthoringContext(graph) : "(empty graph)";
+      const text = await deps.chat(STRUCT_SYSTEM, `${context}\n\n骨架指令：${params.instruction}`);
+      const { graph: next, rev } = await applyGraphDelta({ projectRoot, projectId, delta: buildStructureDeltaFromLLMText(text), phase: "structure" });
+      return textResult(`Structure drafted: ${next.nodes.length} nodes (rev ${rev}).`, { kind: "graph_updated", rev });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// connect_choice — confirm-class: full StoryNode → buildConnectChoiceDelta → apply
+// ---------------------------------------------------------------------------
+
+const ConnectChoiceParams = Type.Object({
+  node: Type.Unsafe<unknown>({ description: "the full StoryNode (with updated choices) to upsert" }),
+});
+
+export function createConnectChoiceTool(
+  projectRoot: string,
+  projectId: string,
+): AgentTool<typeof ConnectChoiceParams> {
+  return {
+    name: "connect_choice",
+    description: "interactive-film authoring: add/rewire a node's choices (topology). Structural — requires user confirmation.",
+    label: "Connect Choice",
+    parameters: ConnectChoiceParams,
+    async execute(_id, params: Static<typeof ConnectChoiceParams>) {
+      const node = StoryNodeSchema.parse(params.node);
+      const { rev } = await applyGraphDelta({ projectRoot, projectId, delta: buildConnectChoiceDelta(node) });
+      return textResult(`Choices updated on node ${node.id} (rev ${rev}).`, { kind: "graph_updated", rev });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// remove_node — confirm-class: nodeId → buildRemoveNodeDelta → apply
+// ---------------------------------------------------------------------------
+
+const RemoveNodeParams = Type.Object({
+  nodeId: Type.String({ description: "node id to remove" }),
+});
+
+export function createRemoveNodeTool(
+  projectRoot: string,
+  projectId: string,
+): AgentTool<typeof RemoveNodeParams> {
+  return {
+    name: "remove_node",
+    description: "interactive-film authoring: delete a node. Destructive — requires user confirmation.",
+    label: "Remove Node",
+    parameters: RemoveNodeParams,
+    async execute(_id, params: Static<typeof RemoveNodeParams>) {
+      const { rev } = await applyGraphDelta({ projectRoot, projectId, delta: buildRemoveNodeDelta(params.nodeId) });
+      return textResult(`Node ${params.nodeId} removed (rev ${rev}).`, { kind: "graph_updated", rev });
+    },
+  };
 }
