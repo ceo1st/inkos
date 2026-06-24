@@ -9,7 +9,8 @@ import {
   useEdgesState,
   type NodeProps,
   type Node,
-  type NodeDragHandler,
+  type Edge,
+  type ReactFlowProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useApi, fetchJson } from "../hooks/use-api";
@@ -27,6 +28,7 @@ interface Nav {
 
 // v12: define Node type with data shape, then use NodeProps<StoryNode>
 type StoryNode = Node<{ label: string; nodeType: string }, "story">;
+type StoryEdge = Edge;
 
 const TYPE_COLOR: Record<string, string> = {
   start: "bg-emerald-100 border-emerald-400",
@@ -72,7 +74,7 @@ export default function FlowView({
   );
 
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<StoryNode>([]);
-  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([]);
+  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<StoryEdge>([]);
   const [editing, setEditing] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -98,7 +100,7 @@ export default function FlowView({
     }
   };
 
-  const onNodeDragStop: NodeDragHandler = async (_evt, node) => {
+  const onNodeDragStop: NonNullable<ReactFlowProps<StoryNode, StoryEdge>["onNodeDragStop"]> = async (_evt, node) => {
     if (!editing || !graph) return;
     const orig = graph.nodes.find((g) => g.id === node.id);
     if (!orig) return;

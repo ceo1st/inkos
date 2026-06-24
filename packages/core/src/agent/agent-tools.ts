@@ -1181,6 +1181,7 @@ export function createInteractiveFilmCreationTool(
         [
           `Interactive film "${result.projectId}" completed.`,
           `Spec: ${result.specPath}`,
+          `Story graph: ${result.storyGraphPath}`,
           `Story tree: ${result.storyTreePath}`,
           `Flags: ${result.flagsPath}`,
           `Script: ${result.scriptPath}`,

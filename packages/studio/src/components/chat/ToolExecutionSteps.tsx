@@ -103,6 +103,7 @@ export interface GeneratedArtifactDetails {
   readonly specPath?: string;
   readonly scriptPath?: string;
   readonly storyboardPath?: string;
+  readonly storyGraphPath?: string;
   readonly storyTreePath?: string;
   readonly flagsPath?: string;
   readonly imagePromptsPath?: string;
@@ -210,6 +211,7 @@ export function getGeneratedArtifactDetails(exec: ToolExecution): GeneratedArtif
     specPath: stringField(record, "specPath"),
     scriptPath: stringField(record, "scriptPath"),
     storyboardPath: stringField(record, "storyboardPath"),
+    storyGraphPath: stringField(record, "storyGraphPath"),
     storyTreePath: stringField(record, "storyTreePath"),
     flagsPath: stringField(record, "flagsPath"),
     imagePromptsPath: stringField(record, "imagePromptsPath"),
@@ -226,15 +228,17 @@ function ScriptStoryboardResultPreview({ exec, onOpenFilm }: { exec: ToolExecuti
     && details.kind !== "storyboard_created"
     && details.kind !== "interactive_film_created"
   )) return null;
-  const rows = [
-    details.specPath ? ["规格", details.specPath] as const : null,
-    details.storyTreePath ? ["剧情树", details.storyTreePath] as const : null,
-    details.flagsPath ? ["变量旗标", details.flagsPath] as const : null,
-    details.scriptPath ? ["剧本", details.scriptPath] as const : null,
-    details.storyboardPath ? ["分镜", details.storyboardPath] as const : null,
-    details.imagePromptsPath ? ["图像提示词", details.imagePromptsPath] as const : null,
-    details.assetsManifestPath ? ["图片资产", details.assetsManifestPath] as const : null,
-  ].filter((row): row is readonly [string, string] => Boolean(row));
+  const maybeRows: Array<readonly [string, string] | null> = [
+    details.specPath ? ["规格", details.specPath] : null,
+    details.storyGraphPath ? ["剧情图谱", details.storyGraphPath] : null,
+    details.storyTreePath ? ["剧情树", details.storyTreePath] : null,
+    details.flagsPath ? ["变量旗标", details.flagsPath] : null,
+    details.scriptPath ? ["剧本", details.scriptPath] : null,
+    details.storyboardPath ? ["分镜", details.storyboardPath] : null,
+    details.imagePromptsPath ? ["图像提示词", details.imagePromptsPath] : null,
+    details.assetsManifestPath ? ["图片资产", details.assetsManifestPath] : null,
+  ];
+  const rows = maybeRows.filter((row): row is readonly [string, string] => Boolean(row));
   if (rows.length === 0 && !(details.kind === "interactive_film_created" && details.projectId)) return null;
   return (
     <div className="mx-3 mb-3 mt-1 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">

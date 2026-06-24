@@ -17,6 +17,10 @@ interface ValidationReport {
   issues: { code: string; level: "error" | "warning" | "info"; message: string; nodeIds: string[] }[];
 }
 
+export function buildProjectExportDownloadUrl(projectId: string): string | null {
+  return buildApiUrl(`/projects/${encodeURIComponent(projectId)}/export`);
+}
+
 export function StoryGraphTree({
   projectId,
   nav,
@@ -38,6 +42,7 @@ export function StoryGraphTree({
   if (loading) return <div className={c.muted}>{t("common.loading")}</div>;
   if (error) return <div className="text-red-400">{t("common.error")}: {error}</div>;
   if (!graph) return null;
+  const exportUrl = buildProjectExportDownloadUrl(projectId);
 
   const genImage = async (nodeId: string) => {
     setGeneratingId(nodeId);
@@ -98,6 +103,16 @@ export function StoryGraphTree({
         >
           AI 对话创作 →
         </button>
+        {exportUrl && (
+          <a
+            href={exportUrl}
+            download
+            className="px-3 py-1 rounded bg-slate-700 text-white"
+            data-testid="film-export-package"
+          >
+            导出整包
+          </a>
+        )}
       </div>
 
       {validation && (

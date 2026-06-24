@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
+import { gzipSync } from "node:zlib";
 import {
   StateManager,
   PipelineRunner,
@@ -91,7 +92,7 @@ import {
   type RequestedIntent,
   type SessionKind,
 } from "@actalk/inkos-core";
-import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
@@ -160,6 +161,76 @@ function compareServiceListItems(
     return (leftPriority === -1 ? 999 : leftPriority) - (rightPriority === -1 ? 999 : rightPriority);
   }
   return 0;
+}
+
+async function buildTarArchive(sourceDir: string, packageRootName: string): Promise<Buffer> {
+  const files = await listArchiveFiles(sourceDir);
+  const chunks: Buffer[] = [];
+  for (const file of files) {
+    const payload = await readFile(join(sourceDir, file));
+    const archiveName = normalizeArchivePath(join(packageRootName, file));
+    chunks.push(createTarHeader(archiveName, payload.byteLength));
+    chunks.push(payload);
+    const padding = (512 - (payload.byteLength % 512)) % 512;
+    if (padding > 0) chunks.push(Buffer.alloc(padding));
+  }
+  chunks.push(Buffer.alloc(1024));
+  return Buffer.concat(chunks);
+}
+
+async function listArchiveFiles(dir: string, prefix = ""): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (entry.name === ".DS_Store") continue;
+    const relativePath = prefix ? join(prefix, entry.name) : entry.name;
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listArchiveFiles(fullPath, relativePath));
+    } else if (entry.isFile()) {
+      files.push(normalizeArchivePath(relativePath));
+    } else {
+      const info = await stat(fullPath).catch(() => null);
+      if (info?.isFile()) files.push(normalizeArchivePath(relativePath));
+    }
+  }
+  return files.sort((a, b) => a.localeCompare(b));
+}
+
+function normalizeArchivePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+/g, "");
+}
+
+function createTarHeader(name: string, size: number): Buffer {
+  const header = Buffer.alloc(512, 0);
+  writeTarString(header, 0, 100, name);
+  writeTarOctal(header, 100, 8, 0o644);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, size);
+  writeTarOctal(header, 136, 12, Math.floor(Date.now() / 1000));
+  header.fill(0x20, 148, 156);
+  header[156] = "0".charCodeAt(0);
+  writeTarString(header, 257, 6, "ustar");
+  writeTarString(header, 263, 2, "00");
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  writeTarOctal(header, 148, 8, checksum);
+  return header;
+}
+
+function writeTarString(header: Buffer, offset: number, length: number, value: string): void {
+  const encoded = Buffer.from(value);
+  if (encoded.byteLength > length) {
+    throw new Error(`Archive path is too long for tar header: ${value}`);
+  }
+  encoded.copy(header, offset);
+}
+
+function writeTarOctal(header: Buffer, offset: number, length: number, value: number): void {
+  const text = value.toString(8).padStart(length - 1, "0").slice(-(length - 1));
+  header.write(text, offset, length - 1, "ascii");
+  header[offset + length - 1] = 0;
 }
 
 function isHeaderSafeApiKey(value: string): boolean {
@@ -5108,6 +5179,29 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return c.json({ error: { code: "NOT_FOUND", message: `story graph not found for ${id}` } }, 404);
+      }
+      throw error;
+    }
+  });
+
+  app.get("/api/v1/projects/:id/export", async (c) => {
+    const id = c.req.param("id");
+    if (!isSafeBookId(id)) {
+      return c.json({ error: { code: "INVALID_ID", message: `invalid project id: ${id}` } }, 400);
+    }
+    const projectDir = join(root, "interactive-films", id);
+    try {
+      await access(projectDir);
+      const archive = gzipSync(await buildTarArchive(projectDir, id));
+      return new Response(new Uint8Array(archive), {
+        headers: {
+          "Content-Type": "application/gzip",
+          "Content-Disposition": `attachment; filename="${encodeURIComponent(id)}.tar.gz"`,
+        },
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return c.json({ error: { code: "NOT_FOUND", message: `interactive film project not found for ${id}` } }, 404);
       }
       throw error;
     }
