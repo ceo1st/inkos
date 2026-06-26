@@ -62,7 +62,7 @@ const PHASE_LABELS: Record<Phase, string> = {
   world: "世界",
   scale: "规模",
   structure: "结构",
-  workshop: "车间",
+  workshop: "逐节点",
   validate: "校验",
 };
 
