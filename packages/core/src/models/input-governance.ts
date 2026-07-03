@@ -112,6 +112,14 @@ export const ChapterTraceSchema = z.object({
     compressibleTokens: 0,
     totalSelectedTokens: 0,
   }),
+  compression: z.object({
+    compiledSource: z.string().min(1),
+    protectedSources: z.array(z.string()).default([]),
+    compressedSources: z.array(z.string()).default([]),
+    protectedTokens: z.number().int().nonnegative().default(0),
+    compressibleTokens: z.number().int().nonnegative().default(0),
+    budgetTokens: z.number().int().nonnegative().default(0),
+  }).optional(),
   notes: z.array(z.string()).default([]),
 });
 

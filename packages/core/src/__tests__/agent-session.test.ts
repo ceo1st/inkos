@@ -563,6 +563,7 @@ describe("runAgentSession cache — bookId switch", () => {
       "propose_action",
       "research_web",
       "ingest_material",
+      "retrieve_material",
     ]);
   });
 
@@ -579,6 +580,7 @@ describe("runAgentSession cache — bookId switch", () => {
       "propose_action",
       "research_web",
       "ingest_material",
+      "retrieve_material",
     ]);
   });
 
@@ -635,6 +637,7 @@ describe("runAgentSession cache — bookId switch", () => {
     expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
       "propose_action",
       "ingest_material",
+      "retrieve_material",
     ]);
 
     await runAgentSession(
@@ -644,6 +647,7 @@ describe("runAgentSession cache — bookId switch", () => {
     expect(agentInstances[1].state.tools.map((tool: any) => tool.name)).toEqual([
       "propose_action",
       "ingest_material",
+      "retrieve_material",
     ]);
   });
 
@@ -781,6 +785,7 @@ describe("runAgentSession cache — bookId switch", () => {
       "play_revise",
       "play_step",
       "ingest_material",
+      "retrieve_material",
     ]);
   });
 
@@ -867,6 +872,7 @@ describe("runAgentSession cache — bookId switch", () => {
       "replace_chapter_text",
       "research_web",
       "ingest_material",
+      "retrieve_material",
       "grep",
       "ls",
     ]);
@@ -888,6 +894,7 @@ describe("runAgentSession cache — bookId switch", () => {
       "patch_chapter_text",
       "replace_chapter_text",
       "ingest_material",
+      "retrieve_material",
       "grep",
       "ls",
     ]);

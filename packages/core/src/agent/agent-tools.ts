@@ -17,6 +17,7 @@ import { generateShortFictionCover, runShortFictionProduction } from "../pipelin
 import { runInteractiveFilmCreation, runScriptCreation, runStoryboardCreation } from "../pipeline/script-storyboard-runner.js";
 import { runResearchReport } from "../agents/researcher.js";
 import { ingestMaterial } from "../materials/ingest.js";
+import { retrieveMaterials } from "../materials/retrieve.js";
 import type { ScriptTargetFormat } from "../agents/script-storyboard.js";
 import { createPlayDB, type PlayGraphDB } from "../play/play-db-factory.js";
 import { PlayRunner, type PlayOpeningSeedResult, type PlayReplayResult, type PlayStepResult, type PlayVariantRestoreResult } from "../play/play-runner.js";
@@ -957,6 +958,88 @@ export function createIngestMaterialTool(projectRoot: string): AgentTool<typeof 
         {
           kind: "material_ingested",
           asset,
+        },
+      );
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4. Material Retrieval Tool (retrieve_material)
+// ---------------------------------------------------------------------------
+
+const RetrieveMaterialParams = Type.Object({
+  query: Type.String({
+    description: "Natural-language query written by the agent from the user's current task, e.g. 冷库赔偿款 0607 账页 or storyboard shot requirements.",
+  }),
+  purpose: Type.Optional(Type.Union([
+    Type.Literal("reference"),
+    Type.Literal("worldbuilding"),
+    Type.Literal("script"),
+    Type.Literal("storyboard"),
+    Type.Literal("research"),
+    Type.Literal("general"),
+  ], {
+    description: "Optional material purpose filter.",
+  })),
+  limit: Type.Optional(Type.Number({
+    description: "Maximum number of material snippets to return. Default 5.",
+  })),
+});
+
+type RetrieveMaterialParamsType = Static<typeof RetrieveMaterialParams>;
+
+export function createRetrieveMaterialTool(projectRoot: string): AgentTool<typeof RetrieveMaterialParams> {
+  return {
+    name: "retrieve_material",
+    description:
+      "Retrieve traceable snippets from previously ingested .inkos/materials reference cards. " +
+      "The agent supplies the semantic query; InkOS returns evidence pointers. This must not mutate canon, chapters, scripts, or play state.",
+    label: "Retrieve Material",
+    parameters: RetrieveMaterialParams,
+    async execute(
+      _toolCallId: string,
+      params: RetrieveMaterialParamsType,
+      _signal?: AbortSignal,
+      onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
+      onUpdate?.(textResult(`Retrieving materials: ${params.query}`));
+      const results = await retrieveMaterials(projectRoot, {
+        query: params.query,
+        purpose: params.purpose,
+        limit: params.limit,
+      });
+      if (results.length === 0) {
+        return textResult(
+          "No matching archived materials were found. Ask the user to upload or ingest relevant material if needed.",
+          {
+            kind: "material_retrieval",
+            query: params.query,
+            purpose: params.purpose,
+            results: [],
+          },
+        );
+      }
+      return textResult(
+        [
+          `Retrieved ${results.length} material snippet${results.length === 1 ? "" : "s"}.`,
+          "",
+          ...results.flatMap((result, index) => [
+            `## ${index + 1}. ${result.title}`,
+            `- source: ${result.source}`,
+            `- path: ${result.markdownPath}:${result.charStart}-${result.charEnd}`,
+            `- purpose: ${result.purpose}`,
+            `- score: ${result.score.toFixed(2)}`,
+            "",
+            result.excerpt,
+            "",
+          ]),
+        ].join("\n"),
+        {
+          kind: "material_retrieval",
+          query: params.query,
+          purpose: params.purpose,
+          results,
         },
       );
     },

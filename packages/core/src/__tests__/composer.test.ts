@@ -322,6 +322,11 @@ describe("ComposerAgent", () => {
     expect(authorIntent?.excerpt).toContain("Keep the pressure on the mentor conflict.");
     expect(compiled?.excerpt).toContain("压缩后的旧章标题历史");
     expect(result.trace.notes).toContain("compiled-compressible-context");
+    expect(result.trace.compression).toMatchObject({
+      compiledSource: "runtime/compiled-compressible-context",
+      compressedSources: expect.arrayContaining(["story/chapter_summaries.md#recent_titles"]),
+      protectedSources: expect.arrayContaining(["story/author_intent.md"]),
+    });
   });
 
   it("emits story context compression lifecycle events when compiling compressible context", async () => {

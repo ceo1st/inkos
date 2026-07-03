@@ -122,6 +122,7 @@ export async function composeGovernedChapter(input: ComposeChapterInput): Promis
     usedSkills: skillContextPlan.usedSkillIds,
     promptPacks: skillContextPlan.promptPackIds,
     contextNeeds: skillContextPlan.contextNeedIds,
+    compression: budgeted.compression,
   });
   const {
     contextPath,
@@ -153,7 +154,11 @@ async function applyContextBudgetIfNeeded(params: {
   readonly contextBudget?: ContextBudget;
   readonly compiler?: CompressibleContextCompiler;
   readonly onContextCompression?: ContextCompressionCallback;
-}): Promise<{ readonly contextPackage: ContextPackage; readonly notes: string[] }> {
+}): Promise<{
+  readonly contextPackage: ContextPackage;
+  readonly notes: string[];
+  readonly compression?: ChapterTrace["compression"];
+}> {
   const budget = params.contextBudget;
   if (!budget || budget.contextWindowTokens <= 0) {
     return { contextPackage: params.contextPackage, notes: [] };
@@ -269,6 +274,14 @@ async function applyContextBudgetIfNeeded(params: {
       ],
     }),
     notes: ["compiled-compressible-context"],
+    compression: {
+      compiledSource: "runtime/compiled-compressible-context",
+      protectedSources: protectedEntries.map((entry) => entry.source),
+      compressedSources: compressibleEntries.map((entry) => entry.source),
+      protectedTokens,
+      compressibleTokens,
+      budgetTokens: compileBudget,
+    },
   };
 }
 
