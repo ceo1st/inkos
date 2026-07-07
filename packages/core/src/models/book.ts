@@ -67,6 +67,7 @@ export const BookConfigSchema = z.object({
   fanficMode: FanficModeSchema.optional(),
   writing: z.object({
     reviewMode: z.enum(["auto", "manual"]).optional(),
+    revisionGate: z.enum(["strict", "lenient", "always"]).optional(),
   }).optional(),
 });
 
@@ -84,4 +85,23 @@ export function resolveChapterReviewMode(
   projectWriting?: { readonly reviewMode?: ChapterReviewMode },
 ): ChapterReviewMode {
   return book.writing?.reviewMode ?? projectWriting?.reviewMode ?? "auto";
+}
+
+export type RevisionGate = "strict" | "lenient" | "always";
+
+/**
+ * Resolve the effective manual-revision gate for a book:
+ * book-level `writing.revisionGate` (book.json) overrides the project-level
+ * `writing.revisionGate` (inkos.json); both unset falls back to "strict".
+ *
+ * - "strict": apply only when audit counts do not worsen AND at least one of
+ *   blocking/AI-tell improves (historical default behavior).
+ * - "lenient": apply whenever audit counts do not worsen (no improvement required).
+ * - "always": always apply manual revisions; audit counts are recorded only.
+ */
+export function resolveRevisionGate(
+  book: Pick<BookConfig, "writing">,
+  projectWriting?: { readonly revisionGate?: RevisionGate },
+): RevisionGate {
+  return book.writing?.revisionGate ?? projectWriting?.revisionGate ?? "strict";
 }

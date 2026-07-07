@@ -1,7 +1,7 @@
 import type { LLMClient, OnStreamProgress } from "../llm/provider.js";
 import { chatCompletion, createLLMClient } from "../llm/provider.js";
 import type { Logger } from "../utils/logger.js";
-import type { BookConfig, FanficMode } from "../models/book.js";
+import type { BookConfig, FanficMode, RevisionGate } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import type { NotifyChannel, LLMConfig, AgentLLMOverride, InputGovernanceMode } from "../models/project.js";
 import type { GenreProfile } from "../models/genre-profile.js";
@@ -246,6 +246,13 @@ export function buildImportFoundationSource(
   ].join("\n");
 }
 
+/** Human-readable description of each manual-revision gate, surfaced in revisionDiagnostics. */
+const REVISION_GATE_STANDARDS: Record<RevisionGate, string> = {
+  strict: "A revision is applied only when blocking, critical, and AI-tell counts do not worsen, and at least blocking or AI-tell issues improve.",
+  lenient: "A revision is applied whenever blocking, critical, and AI-tell counts do not worsen; no improvement is required (lenient gate).",
+  always: "Manual revisions are always applied; audit counts are recorded for reference only (always gate).",
+};
+
 export interface PipelineConfig {
   readonly client: LLMClient;
   readonly model: string;
@@ -259,6 +266,14 @@ export interface PipelineConfig {
    * become explicit, user-driven checkpoint actions — chapter write stays fast.
    */
   readonly chapterReviewMode?: "auto" | "manual";
+  /**
+   * Gate for applying manual revisions (default "strict"):
+   * - "strict": apply only when blocking/critical/AI-tell counts do not worsen
+   *   AND at least one of blocking or AI-tell improves.
+   * - "lenient": apply whenever the counts do not worsen (no improvement required).
+   * - "always": always apply; audit counts are recorded but never block.
+   */
+  readonly revisionGate?: RevisionGate;
   readonly notifyChannels?: ReadonlyArray<NotifyChannel>;
   readonly radarSources?: ReadonlyArray<RadarSource>;
   readonly externalContext?: string;
@@ -1436,10 +1451,13 @@ export class PipelineRunner {
       const blockingDidNotWorsen = effectivePostRevision.blockingCount <= preRevision.blockingCount;
       const criticalDidNotWorsen = effectivePostRevision.criticalCount <= preRevision.criticalCount;
       const aiDidNotWorsen = effectivePostRevision.aiTellCount <= preRevision.aiTellCount;
-      const shouldApplyRevision = blockingDidNotWorsen
-        && criticalDidNotWorsen
-        && aiDidNotWorsen
-        && (improvedBlocking || improvedAITells);
+      const didNotWorsen = blockingDidNotWorsen && criticalDidNotWorsen && aiDidNotWorsen;
+      const revisionGate = this.config.revisionGate ?? "strict";
+      const shouldApplyRevision = revisionGate === "always"
+        ? true
+        : revisionGate === "lenient"
+          ? didNotWorsen
+          : didNotWorsen && (improvedBlocking || improvedAITells);
 
       if (!shouldApplyRevision) {
         const remainingIssues = effectivePostRevision.revisionBlockingIssues
@@ -1459,7 +1477,7 @@ export class PipelineRunner {
           status: "unchanged",
           skippedReason: `Manual revision kept original chapter: before blocking=${preRevision.blockingCount}, critical=${preRevision.criticalCount}, aiTell=${preRevision.aiTellCount}; after blocking=${effectivePostRevision.blockingCount}, critical=${effectivePostRevision.criticalCount}, aiTell=${effectivePostRevision.aiTellCount}.`,
           revisionDiagnostics: {
-            standard: "A revision is applied only when blocking, critical, and AI-tell counts do not worsen, and at least blocking or AI-tell issues improve.",
+            standard: REVISION_GATE_STANDARDS[revisionGate],
             before: {
               blockingCount: preRevision.blockingCount,
               criticalCount: preRevision.criticalCount,

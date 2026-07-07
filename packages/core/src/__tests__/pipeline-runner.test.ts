@@ -4955,6 +4955,136 @@ describe("PipelineRunner", () => {
     }
   }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
 
+  async function createRevisionGateFixture(revisionGate?: "strict" | "lenient" | "always") {
+    const fixture = await createRunnerFixture(revisionGate ? { revisionGate } : {});
+    const storyDir = join(fixture.state.bookDir(fixture.bookId), "story");
+    const chaptersDir = join(fixture.state.bookDir(fixture.bookId), "chapters");
+    // Single paragraph, varied sentence openings, no hedge/transition words →
+    // zero structural AI tells, so audit counts come only from the LLM audit mocks.
+    const originalBody = "林越推门进去，先看见柜台后那盏没关的灯，他放轻脚步绕过货架。";
+    const revisedBody = "门被风顶开，林越先停在门槛前，听见柜台后那盏灯轻轻晃动。";
+
+    await Promise.all([
+      writeFile(join(chaptersDir, "0001_Test_Chapter.md"), `# 第1章 Test Chapter\n\n${originalBody}`, "utf-8"),
+      writeFile(join(storyDir, "current_state.md"), createStateCard({
+        chapter: 1,
+        location: "Ashen ferry crossing",
+        protagonistState: "Lin Yue still hides the oath token.",
+        goal: "Find the vanished mentor.",
+        conflict: "The mentor debt is still personal.",
+      }), "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+    ]);
+    await fixture.state.saveChapterIndex(fixture.bookId, [{
+      number: 1,
+      title: "Test Chapter",
+      status: "audit-failed",
+      wordCount: originalBody.length,
+      createdAt: "2026-03-19T00:00:00.000Z",
+      updatedAt: "2026-03-19T00:00:00.000Z",
+      auditIssues: [],
+      lengthWarnings: [],
+    }]);
+
+    vi.spyOn(ReviserAgent.prototype, "reviseChapter").mockResolvedValue(
+      createReviseOutput({
+        revisedContent: revisedBody,
+        wordCount: revisedBody.length,
+        fixedIssues: ["- 调整了开场镜头。"],
+        updatedState: createStateCard({
+          chapter: 1,
+          location: "Ashen ferry crossing",
+          protagonistState: "Lin Yue still hides the oath token.",
+          goal: "Find the vanished mentor.",
+          conflict: "The mentor debt sharpens into a direct threat.",
+        }),
+        updatedHooks: "# Pending Hooks\n",
+      }),
+    );
+
+    return { ...fixture, chaptersDir, revisedBody };
+  }
+
+  const GATE_WARNING_ISSUE: AuditIssue = {
+    severity: "warning",
+    category: "节奏",
+    description: "结尾解释略多。",
+    suggestion: "压缩一行解释。",
+  };
+
+  it("applies a no-improvement manual revision when revisionGate is lenient", async () => {
+    const { root, runner, bookId, chaptersDir, revisedBody } = await createRevisionGateFixture("lenient");
+
+    // Same warning before and after: strict would reject (no improvement),
+    // lenient applies because nothing worsened.
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter")
+      .mockResolvedValueOnce(createAuditResult({ passed: false, issues: [GATE_WARNING_ISSUE], summary: "needs revision" }))
+      .mockResolvedValueOnce(createAuditResult({ passed: false, issues: [GATE_WARNING_ISSUE], summary: "still weak" }));
+
+    try {
+      const result = await runner.reviseDraft(bookId, 1);
+      const savedChapter = await readFile(join(chaptersDir, "0001_Test_Chapter.md"), "utf-8");
+
+      expect(result.applied).toBe(true);
+      expect(result.skippedReason).toBeUndefined();
+      expect(savedChapter).toContain(revisedBody);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("rejects a worsening manual revision under the lenient gate and reports the lenient standard", async () => {
+    const { root, runner, bookId, chaptersDir, revisedBody } = await createRevisionGateFixture("lenient");
+
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter")
+      .mockResolvedValueOnce(createAuditResult({ passed: false, issues: [GATE_WARNING_ISSUE], summary: "needs revision" }))
+      .mockResolvedValueOnce(createAuditResult({
+        passed: false,
+        issues: [GATE_WARNING_ISSUE, CRITICAL_ISSUE],
+        summary: "worse",
+      }));
+
+    try {
+      const result = await runner.reviseDraft(bookId, 1);
+      const savedChapter = await readFile(join(chaptersDir, "0001_Test_Chapter.md"), "utf-8");
+
+      expect(result.applied).toBe(false);
+      expect(result.skippedReason).toContain("Manual revision kept original chapter");
+      expect(result.revisionDiagnostics?.standard).toContain("lenient gate");
+      expect(result.revisionDiagnostics?.after.criticalCount).toBe(1);
+      expect(savedChapter).not.toContain(revisedBody);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("always applies manual revisions when revisionGate is always, even when the audit worsens", async () => {
+    const { root, runner, state, bookId, chaptersDir, revisedBody } = await createRevisionGateFixture("always");
+
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter")
+      .mockResolvedValueOnce(createAuditResult({ passed: false, issues: [GATE_WARNING_ISSUE], summary: "needs revision" }))
+      .mockResolvedValueOnce(createAuditResult({
+        passed: false,
+        issues: [GATE_WARNING_ISSUE, CRITICAL_ISSUE],
+        summary: "worse",
+      }));
+
+    try {
+      const result = await runner.reviseDraft(bookId, 1);
+      const savedChapter = await readFile(join(chaptersDir, "0001_Test_Chapter.md"), "utf-8");
+      const savedIndex = await state.loadChapterIndex(bookId);
+
+      expect(result.applied).toBe(true);
+      expect(savedChapter).toContain(revisedBody);
+      // Audit metrics are still recorded — the failing audit lands in the index
+      // instead of blocking the user's explicit revision.
+      expect(savedIndex[0]?.status).toBe("audit-failed");
+      expect(savedIndex[0]?.auditIssues).toContain("[critical] Fix the chapter state");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
   it("re-audits revisions against updated state overrides instead of stale on-disk truth files", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture();
     const storyDir = join(state.bookDir(bookId), "story");
