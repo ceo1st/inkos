@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { safeChildPath } from "../utils/path-safety.js";
+import { toPosixPath } from "../utils/posix-path.js";
 import type { MaterialAsset, MaterialPurpose } from "./ingest.js";
 
 export interface RetrieveMaterialsInput {
@@ -51,7 +52,8 @@ export async function retrieveMaterials(
       kind: asset.kind,
       purpose: asset.purpose,
       source: asset.source,
-      markdownPath: asset.markdownPath,
+      // Manifests written by older Windows builds may contain "\" separators.
+      markdownPath: toPosixPath(asset.markdownPath),
       score,
       excerpt: snippet.excerpt,
       charStart: snippet.charStart,

@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
 import { extractText, getDocumentProxy } from "unpdf";
 import { safeChildPath } from "../utils/path-safety.js";
+import { toPosixPath } from "../utils/posix-path.js";
 
 export type MaterialPurpose = "reference" | "worldbuilding" | "script" | "storyboard" | "research" | "general";
 export type MaterialSourceKind = "url" | "file";
@@ -71,8 +72,8 @@ export async function ingestMaterial(
     purpose,
     source: source.source,
     mimeType: source.mimeType,
-    markdownPath: relative(projectRoot, markdownPathAbs),
-    manifestPath: relative(projectRoot, manifestPathAbs),
+    markdownPath: toPosixPath(relative(projectRoot, markdownPathAbs)),
+    manifestPath: toPosixPath(relative(projectRoot, manifestPathAbs)),
     charCount: source.text.length,
     excerpt: source.text.slice(0, EXCERPT_CHARS),
     ...(source.totalPages !== undefined ? { totalPages: source.totalPages } : {}),
@@ -108,7 +109,7 @@ async function readMaterialSource(
   const filename = input.filename || basename(safePath);
   const mimeType = input.mimeType || mimeFromFilename(filename);
   return extractBufferMaterial(buffer, {
-    source: relative(projectRoot, safePath),
+    source: toPosixPath(relative(projectRoot, safePath)),
     filename,
     mimeType,
   });

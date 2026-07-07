@@ -20,6 +20,7 @@ import {
   type StoryboardCreationInput,
 } from "../agents/script-storyboard.js";
 import { safeChildPath } from "../utils/path-safety.js";
+import { toPosixPath } from "../utils/posix-path.js";
 
 export interface ScriptCreationRunOptions {
   readonly projectRoot: string;
@@ -175,8 +176,8 @@ export async function runScriptCreation(
   return {
     projectId,
     baseDir,
-    specPath: join(baseDir, "script-spec.md"),
-    scriptPath: join(baseDir, "script.md"),
+    specPath: relPath(baseDir, "script-spec.md"),
+    scriptPath: relPath(baseDir, "script.md"),
   };
 }
 
@@ -231,7 +232,7 @@ export async function runInteractiveFilmCreation(
     "Storyboard",
   ], packageMarkdown);
   const imagePrompts = extractStoryboardImagePrompts(storyboard);
-  const storyGraphPath = join("interactive-films", projectId, "story-graph.json");
+  const storyGraphPath = relPath("interactive-films", projectId, "story-graph.json");
 
   await writeProjectText(options.projectRoot, join(baseDir, "story-tree.md"), storyTree);
   await writeProjectText(options.projectRoot, join(baseDir, "flags.md"), flags);
@@ -279,14 +280,14 @@ export async function runInteractiveFilmCreation(
     projectId,
     baseDir,
     storyGraphPath,
-    specPath: join(baseDir, "interactive-spec.md"),
-    storyTreePath: join(baseDir, "story-tree.md"),
-    flagsPath: join(baseDir, "flags.md"),
-    scriptPath: join(baseDir, "script.md"),
-    storyboardPath: join(baseDir, "storyboard.md"),
-    imagePromptsPath: join(baseDir, "image-prompts.md"),
-    assetsManifestPath: join(baseDir, "assets.json"),
-    assetsDir: join(baseDir, "assets"),
+    specPath: relPath(baseDir, "interactive-spec.md"),
+    storyTreePath: relPath(baseDir, "story-tree.md"),
+    flagsPath: relPath(baseDir, "flags.md"),
+    scriptPath: relPath(baseDir, "script.md"),
+    storyboardPath: relPath(baseDir, "storyboard.md"),
+    imagePromptsPath: relPath(baseDir, "image-prompts.md"),
+    assetsManifestPath: relPath(baseDir, "assets.json"),
+    assetsDir: relPath(baseDir, "assets"),
   };
 }
 
@@ -343,11 +344,11 @@ export async function runStoryboardCreation(
   return {
     projectId,
     baseDir,
-    specPath: join(baseDir, "storyboard-spec.md"),
-    storyboardPath: join(baseDir, "storyboard.md"),
-    imagePromptsPath: join(baseDir, "image-prompts.md"),
-    assetsManifestPath: join(baseDir, "assets.json"),
-    assetsDir: join(baseDir, "assets"),
+    specPath: relPath(baseDir, "storyboard-spec.md"),
+    storyboardPath: relPath(baseDir, "storyboard.md"),
+    imagePromptsPath: relPath(baseDir, "image-prompts.md"),
+    assetsManifestPath: relPath(baseDir, "assets.json"),
+    assetsDir: relPath(baseDir, "assets"),
   };
 }
 
@@ -496,20 +497,20 @@ export function createStoryboardAssetsManifest(args: {
   readonly imagePrompts: string;
   readonly createdAt: string;
 }): StoryboardAssetsManifest {
-  const assetsDir = join(args.baseDir, "assets");
+  const assetsDir = relPath(args.baseDir, "assets");
   const prompts = parseStoryboardPromptLines(args.imagePrompts);
   return {
     version: 1,
     kind: "storyboard_assets",
     title: args.title,
     projectId: args.projectId,
-    baseDir: args.baseDir,
-    storyboardPath: args.storyboardPath,
-    imagePromptsPath: args.imagePromptsPath,
+    baseDir: toPosixPath(args.baseDir),
+    storyboardPath: toPosixPath(args.storyboardPath),
+    imagePromptsPath: toPosixPath(args.imagePromptsPath),
     assetsDir,
-    sourceDir: join(assetsDir, "source"),
-    generatedDir: join(assetsDir, "generated"),
-    selectedDir: join(assetsDir, "selected"),
+    sourceDir: relPath(assetsDir, "source"),
+    generatedDir: relPath(assetsDir, "generated"),
+    selectedDir: relPath(assetsDir, "selected"),
     createdAt: args.createdAt,
     assets: prompts.map((prompt, index) => {
       const shotId = `shot-${String(index + 1).padStart(3, "0")}`;
@@ -563,7 +564,12 @@ function normalizeOutputDir(value: string): string {
 
 function resolveProjectBaseDir(outDir: string, projectId: string): string {
   const outputDir = normalizeOutputDir(outDir);
-  return basename(outputDir) === projectId ? outputDir : join(outputDir, projectId);
+  return basename(outputDir) === projectId ? outputDir : relPath(outputDir, projectId);
+}
+
+// Project-relative path for results and manifests: always "/" separators.
+function relPath(...segments: string[]): string {
+  return toPosixPath(join(...segments));
 }
 
 function safeSegment(value: string): string {

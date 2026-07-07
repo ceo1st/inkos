@@ -26,6 +26,7 @@ import {
 import { coverSecretKey, resolveCoverProviderPreset, type CoverProviderPreset } from "../llm/cover-providers.js";
 import { loadSecrets } from "../llm/secrets.js";
 import { safeChildPath } from "../utils/path-safety.js";
+import { toPosixPath as projectPath } from "../utils/posix-path.js";
 
 const SHORT_FICTION_DRAFT_COMPLETION_ATTEMPTS = 3;
 
@@ -869,10 +870,6 @@ function normalizeOutputDir(value: string): string {
   const normalized = projectPath(trimmed).replace(/^\/+/u, "").replace(/\/+$/u, "") || "shorts";
   safeChildPath("/", normalized);
   return normalized;
-}
-
-function projectPath(value: string): string {
-  return value.replace(/\\/gu, "/");
 }
 
 function boundedInteger(value: number | undefined, fallback: number, name: string, min: number, max: number): number {
