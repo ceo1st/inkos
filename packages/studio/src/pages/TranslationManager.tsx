@@ -24,12 +24,23 @@ interface TranslationManifest {
   readonly title: string;
   readonly sourceLanguage: string;
   readonly targetLanguage: string;
-  readonly chapters: ReadonlyArray<{ readonly chapterId: string; readonly title: string; readonly status: string }>;
+  readonly chapters: ReadonlyArray<{ readonly number: number; readonly title: string; readonly status: string }>;
 }
 
 interface TranslationDetailResponse {
   readonly manifest: TranslationManifest;
   readonly report: string;
+  readonly chapters?: ReadonlyArray<{
+    readonly number: number;
+    readonly title: string;
+    readonly status: string;
+    readonly segments: ReadonlyArray<{
+      readonly index: number;
+      readonly source: string;
+      readonly target: string;
+      readonly notes?: string;
+    }>;
+  }>;
 }
 
 interface TranslationUploadResponse {
@@ -69,9 +80,50 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+const LANGUAGE_PRESETS_ZH = [
+  "自动识别",
+  "中文（简体）",
+  "中文（繁体）",
+  "英语",
+  "日语",
+  "韩语",
+  "法语",
+  "德语",
+  "西班牙语",
+  "葡萄牙语",
+  "俄语",
+  "阿拉伯语",
+  "印尼语",
+  "越南语",
+  "泰语",
+  "意大利语",
+  "土耳其语",
+] as const;
+
+const LANGUAGE_PRESETS_EN = [
+  "Auto detect",
+  "Chinese (Simplified)",
+  "Chinese (Traditional)",
+  "English",
+  "Japanese",
+  "Korean",
+  "French",
+  "German",
+  "Spanish",
+  "Portuguese",
+  "Russian",
+  "Arabic",
+  "Indonesian",
+  "Vietnamese",
+  "Thai",
+  "Italian",
+  "Turkish",
+] as const;
+
 export function TranslationManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const isZh = t("nav.connected") === "已连接";
+  const languagePresets = isZh ? LANGUAGE_PRESETS_ZH : LANGUAGE_PRESETS_EN;
   const { data, loading, error, refetch } = useApi<TranslationListResponse>("/translations");
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<TranslationDetailResponse | null>(null);
@@ -81,9 +133,10 @@ export function TranslationManager({ nav, theme, t }: { nav: Nav; theme: Theme; 
   const [file, setFile] = useState<File | null>(null);
   const [uploaded, setUploaded] = useState<TranslationUploadResponse | null>(null);
   const [title, setTitle] = useState("");
-  const [sourceLanguage, setSourceLanguage] = useState("auto");
-  const [targetLanguage, setTargetLanguage] = useState(isZh ? "zh" : "en");
+  const [sourceLanguage, setSourceLanguage] = useState(isZh ? "自动识别" : "Auto detect");
+  const [targetLanguage, setTargetLanguage] = useState(isZh ? "中文（简体）" : "English");
   const [segmentMaxChars, setSegmentMaxChars] = useState(1200);
+  const [previewChapterNumber, setPreviewChapterNumber] = useState<number | null>(null);
 
   const translations = data?.translations ?? [];
   const selected = useMemo(
@@ -94,14 +147,23 @@ export function TranslationManager({ nav, theme, t }: { nav: Nav; theme: Theme; 
   useEffect(() => {
     if (!selected?.projectId) {
       setDetail(null);
+      setPreviewChapterNumber(null);
       return;
     }
     setDetailLoading(true);
     fetchJson<TranslationDetailResponse>(`/translations/${encodeURIComponent(selected.projectId)}`)
-      .then(setDetail)
+      .then((nextDetail) => {
+        setDetail(nextDetail);
+        setPreviewChapterNumber(nextDetail.chapters?.[0]?.number ?? nextDetail.manifest.chapters[0]?.number ?? null);
+      })
       .catch((err) => setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`))
       .finally(() => setDetailLoading(false));
   }, [selected?.projectId]);
+
+  const previewChapter = useMemo(() => {
+    const chapters = detail?.chapters ?? [];
+    return chapters.find((chapter) => chapter.number === previewChapterNumber) ?? chapters[0] ?? null;
+  }, [detail?.chapters, previewChapterNumber]);
 
   const uploadFile = async () => {
     if (!file) return;
@@ -166,6 +228,7 @@ export function TranslationManager({ nav, theme, t }: { nav: Nav; theme: Theme; 
       await refetch();
       const updated = await fetchJson<TranslationDetailResponse>(`/translations/${encodeURIComponent(selected.projectId)}`);
       setDetail(updated);
+      setPreviewChapterNumber(updated.chapters?.[0]?.number ?? updated.manifest.chapters[0]?.number ?? null);
     } catch (err) {
       setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -247,12 +310,32 @@ export function TranslationManager({ nav, theme, t }: { nav: Nav; theme: Theme; 
           <div className="grid grid-cols-2 gap-3">
             <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t("translation.source")}
-              <input value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)} className="w-full rounded-lg border border-border bg-secondary/30 px-3 py-2 text-sm normal-case text-foreground" />
+              <input
+                list="translation-source-language-options"
+                value={sourceLanguage}
+                onChange={(e) => setSourceLanguage(e.target.value)}
+                placeholder={t("translation.sourcePlaceholder")}
+                className="w-full rounded-lg border border-border bg-secondary/30 px-3 py-2 text-sm normal-case text-foreground"
+              />
             </label>
             <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t("translation.target")}
-              <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)} className="w-full rounded-lg border border-border bg-secondary/30 px-3 py-2 text-sm normal-case text-foreground" />
+              <input
+                list="translation-target-language-options"
+                value={targetLanguage}
+                onChange={(e) => setTargetLanguage(e.target.value)}
+                placeholder={t("translation.targetPlaceholder")}
+                className="w-full rounded-lg border border-border bg-secondary/30 px-3 py-2 text-sm normal-case text-foreground"
+              />
             </label>
+            <datalist id="translation-source-language-options">
+              {languagePresets.map((language) => <option key={`source-${language}`} value={language} />)}
+            </datalist>
+            <datalist id="translation-target-language-options">
+              {languagePresets.filter((language) => language !== (isZh ? "自动识别" : "Auto detect")).map((language) => (
+                <option key={`target-${language}`} value={language} />
+              ))}
+            </datalist>
           </div>
           <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground block">
             {t("translation.projectTitle")}
@@ -328,11 +411,44 @@ export function TranslationManager({ nav, theme, t }: { nav: Nav; theme: Theme; 
               {detail?.manifest && (
                 <div className="grid gap-2 md:grid-cols-2">
                   {detail.manifest.chapters.map((chapter) => (
-                    <div key={chapter.chapterId} className="rounded-lg bg-secondary/30 px-3 py-2 text-sm">
+                    <button
+                      key={`${chapter.number}-${chapter.title}`}
+                      type="button"
+                      onClick={() => setPreviewChapterNumber(chapter.number)}
+                      className={`rounded-lg px-3 py-2 text-left text-sm transition-colors ${previewChapter?.number === chapter.number ? "bg-primary/10 ring-1 ring-primary/50" : "bg-secondary/30 hover:bg-secondary/50"}`}
+                    >
                       <div className="font-medium">{chapter.title}</div>
                       <div className="text-xs text-muted-foreground">{chapter.status}</div>
-                    </div>
+                    </button>
                   ))}
+                </div>
+              )}
+              {previewChapter && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{t("translation.preview")}</div>
+                      <div className="font-semibold">{previewChapter.title}</div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">{previewChapter.status}</div>
+                  </div>
+                  <div className="max-h-[560px] overflow-auto rounded-xl border border-border bg-background/50">
+                    {previewChapter.segments.map((segment) => (
+                      <div key={segment.index} className="grid gap-0 border-b border-border/70 last:border-b-0 lg:grid-cols-2">
+                        <div className="space-y-2 p-4">
+                          <div className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{t("translation.original")}</div>
+                          <p className="whitespace-pre-wrap text-sm leading-7 text-muted-foreground">{segment.source}</p>
+                        </div>
+                        <div className="space-y-2 border-t border-border/70 bg-secondary/20 p-4 lg:border-l lg:border-t-0">
+                          <div className="text-[11px] font-bold uppercase tracking-wide text-primary">{t("translation.translated")}</div>
+                          <p className="whitespace-pre-wrap text-sm leading-7">{segment.target?.trim() || t("translation.untranslated")}</p>
+                          {segment.notes?.trim() ? (
+                            <p className="rounded-lg bg-background/70 px-3 py-2 text-xs leading-5 text-muted-foreground">{segment.notes}</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
               <div>

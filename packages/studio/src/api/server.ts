@@ -93,6 +93,7 @@ import {
   createRemoveNodeTool,
   createLLMTranslationModel,
   createTranslationProjectFromFile,
+  loadTranslationChapter,
   loadTranslationManifest,
   runTranslationProject,
   writeTranslationExport,
@@ -5928,7 +5929,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       title: body.title,
       segmentMaxChars: body.segmentMaxChars,
     });
-    return c.json(result);
+    return c.json({
+      ...result,
+      projectId: result.manifest.id,
+      title: result.manifest.title,
+    });
   });
 
   app.get("/api/v1/translations/:id", async (c) => {
@@ -5940,7 +5945,26 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       const manifest = await loadTranslationManifest(root, id);
       const reportPath = join(root, "translations", id, "review-report.md");
       const report = await readFile(reportPath, "utf-8").catch(() => "");
-      return c.json({ manifest, report });
+      const chapters = await Promise.all(manifest.chapters.map(async (chapter) => {
+        const source = await loadTranslationChapter(root, chapter.sourcePath);
+        const translated = await loadTranslationChapter(root, chapter.translatedPath).catch(() => ({
+          ...source,
+          segments: [],
+        }));
+        const targets = new Map(translated.segments.map((segment) => [segment.index, segment]));
+        return {
+          number: chapter.number,
+          title: chapter.title,
+          status: chapter.status,
+          segments: source.segments.map((segment) => ({
+            index: segment.index,
+            source: segment.source,
+            target: targets.get(segment.index)?.target ?? "",
+            notes: targets.get(segment.index)?.notes ?? "",
+          })),
+        };
+      }));
+      return c.json({ manifest, report, chapters });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return c.json({ error: { code: "NOT_FOUND", message: `translation project not found for ${id}` } }, 404);
@@ -5955,17 +5979,28 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       return c.json({ error: { code: "INVALID_ID", message: `invalid translation id: ${id}` } }, 400);
     }
     const body: { batchSize?: number; maxTokens?: number } = await c.req.json().catch(() => ({}));
-    const currentConfig = await loadCurrentProjectConfig();
-    const model = createLLMTranslationModel({
-      client: createLLMClient(currentConfig.llm),
-      model: currentConfig.llm.model,
-      maxTokens: body.maxTokens,
-    });
-    const result = await runTranslationProject(root, id, {
-      model,
-      batchSize: body.batchSize,
-    });
-    return c.json(result);
+    try {
+      const currentConfig = await loadCurrentProjectConfig();
+      const model = createLLMTranslationModel({
+        client: createLLMClient(currentConfig.llm),
+        model: currentConfig.llm.model,
+        maxTokens: body.maxTokens,
+      });
+      const result = await runTranslationProject(root, id, {
+        model,
+        batchSize: body.batchSize,
+      });
+      return c.json(result);
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      const isUpstream = /API|LLM|provider|upstream|temporarily unavailable|rate limit|quota|fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|503|502|504/i.test(message);
+      throw new ApiError(
+        isUpstream ? 502 : 500,
+        "TRANSLATION_RUN_FAILED",
+        message || "Translation run failed.",
+      );
+    }
   });
 
   app.post("/api/v1/translations/:id/export", async (c) => {

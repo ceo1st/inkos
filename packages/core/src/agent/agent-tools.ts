@@ -263,8 +263,8 @@ const ProposeActionParams = Type.Object({
   }, { description: "Structured execution args for action=interactive_film_create." })),
   translationCreate: Type.Optional(Type.Object({
     filePath: Type.Optional(Type.String({ description: "Project-relative EPUB/PDF/TXT/Markdown source file path to translate." })),
-    sourceLanguage: Type.Optional(Type.String({ description: "Source language, e.g. ja, en, zh, ko, auto." })),
-    targetLanguage: Type.Optional(Type.String({ description: "Target language, e.g. zh, en, ja." })),
+    sourceLanguage: Type.Optional(Type.String({ description: "Source language as a human-readable name, e.g. Auto detect, Japanese, English, Chinese (Simplified), 繁体中文（台湾）. Do not require ISO abbreviations." })),
+    targetLanguage: Type.Optional(Type.String({ description: "Target language as a human-readable name, e.g. Chinese (Simplified), English, Japanese, Korean, Brazilian Portuguese. Do not require ISO abbreviations." })),
     title: Type.Optional(Type.String({ description: "Optional translation project title." })),
     segmentMaxChars: Type.Optional(Type.Number({ description: "Optional long-paragraph split threshold." })),
   }, { description: "Structured execution args for action=translation_create." })),
@@ -1346,10 +1346,10 @@ const TranslationCreateParams = Type.Object({
     description: "Project-relative EPUB/PDF/TXT/Markdown source file path to translate.",
   }),
   sourceLanguage: Type.String({
-    description: "Source language, e.g. ja, en, zh, ko, auto.",
+    description: "Source language as a human-readable name, e.g. Auto detect, Japanese, English, Chinese (Simplified), 繁体中文（台湾）. Do not require ISO abbreviations.",
   }),
   targetLanguage: Type.String({
-    description: "Target language, e.g. zh, en, ja.",
+    description: "Target language as a human-readable name, e.g. Chinese (Simplified), English, Japanese, Korean, Brazilian Portuguese. Do not require ISO abbreviations.",
   }),
   title: Type.Optional(Type.String({
     description: "Optional translation project title.",
