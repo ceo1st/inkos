@@ -201,6 +201,7 @@ describe("public short-fiction chain", () => {
   it("generates a standalone cover artifact without running the short fiction pipeline", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-cover-tool-"));
     const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
     process.env.INKOS_TEST_COVER_KEY = "sk-cover";
     try {
       const fetchMock = vi.fn(async (_url: unknown, _init?: { readonly body?: unknown }) => new Response(JSON.stringify({
@@ -218,6 +219,7 @@ describe("public short-fiction chain", () => {
         coverEndpoint: "https://images.example.test/v1/images/generations",
         coverModel: "gpt-image-2",
         coverApiKeyEnv: "INKOS_TEST_COVER_KEY",
+        signal: controller.signal,
       });
 
       expect(result.coverPromptPath).toBe("covers/demo/cover-prompt.md");
@@ -231,6 +233,7 @@ describe("public short-fiction chain", () => {
         expect.objectContaining({
           method: "POST",
           body: expect.stringContaining("离婚协议他递了三年"),
+          signal: controller.signal,
         }),
       );
       const body = String(fetchMock.mock.calls[0]?.[1]?.body ?? "");

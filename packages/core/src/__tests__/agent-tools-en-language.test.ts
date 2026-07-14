@@ -178,6 +178,28 @@ describe("agent tools language wiring (en parity)", () => {
     expect(runInteractiveFilmCreationMock.mock.calls[0]![0]).toMatchObject({ language: "en" });
   });
 
+  it("runs standalone production tools inside the pipeline abort scope", async () => {
+    const runWithAbortSignal = vi.fn(async (_signal: AbortSignal | undefined, task: () => Promise<unknown>) => task());
+    const pipeline = {
+      createAgentContext: vi.fn(() => ({})),
+      runWithAbortSignal,
+    };
+    const controller = new AbortController();
+
+    await createShortFictionRunTool(pipeline as never, root)
+      .execute("short-abort-1", { direction: "女频短篇 婚姻背叛 证据反杀" } as any, controller.signal);
+    await createScriptCreationTool(pipeline as never, root)
+      .execute("script-abort-1", { title: "Night Shift", instruction: "adapt into a short drama" } as any, controller.signal);
+    await createStoryboardCreationTool(pipeline as never, root)
+      .execute("storyboard-abort-1", { title: "Night Shift", instruction: "storyboard the opening" } as any, controller.signal);
+    await createInteractiveFilmCreationTool(pipeline as never, root)
+      .execute("film-abort-1", { title: "Night Shift", instruction: "make it interactive" } as any, controller.signal);
+
+    expect(runWithAbortSignal).toHaveBeenCalledTimes(4);
+    expect(runWithAbortSignal.mock.calls.every(([signal]) => signal === controller.signal)).toBe(true);
+    expect(runShortFictionProductionMock.mock.calls[0]![0]).toMatchObject({ signal: controller.signal });
+  });
+
   it("exposes short_fiction_run with en language in a confirmed en short session", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = { createAgentContext: vi.fn(() => ({})) } as any;

@@ -1317,30 +1317,35 @@ export function createShortFictionRunTool(
     ): Promise<AgentToolResult<unknown>> {
       const progress = (message: string) => onUpdate?.(textResult(message));
       const shortPayload = options.actionPayload?.shortRun;
-      const result = await runShortFictionProduction({
-        projectRoot,
-        direction: shortPayload?.direction ?? params.direction,
-        runtimes: {
-          planner: pipeline.createAgentContext("short-outline"),
-          outlineReview: pipeline.createAgentContext("short-outline-review"),
-          writer: pipeline.createAgentContext("short-writer"),
-          draftReview: pipeline.createAgentContext("short-draft-review"),
-          revise: pipeline.createAgentContext("short-revise"),
-          package: pipeline.createAgentContext("short-package"),
-        },
-        ...((shortPayload?.reference ?? params.reference) ? { reference: { text: shortPayload?.reference ?? params.reference! } } : {}),
-        storyId: shortPayload?.storyId ?? params.storyId,
-        chapterCount: shortPayload?.chapters ?? params.chapters,
-        charsPerChapter: shortPayload?.charsPerChapter ?? params.charsPerChapter,
-        language: options.language,
-        cover: shortPayload?.cover ?? params.cover,
-        coverBaseUrl: params.coverBaseUrl,
-        coverEndpoint: params.coverEndpoint,
-        coverModel: params.coverModel,
-        coverSize: params.coverSize,
-        coverApiKeyEnv: params.coverApiKeyEnv,
-        onProgress: progress,
-      });
+      const result = await runPipelineWithAbortSignal(
+        pipeline,
+        _signal,
+        () => runShortFictionProduction({
+          projectRoot,
+          direction: shortPayload?.direction ?? params.direction,
+          runtimes: {
+            planner: pipeline.createAgentContext("short-outline"),
+            outlineReview: pipeline.createAgentContext("short-outline-review"),
+            writer: pipeline.createAgentContext("short-writer"),
+            draftReview: pipeline.createAgentContext("short-draft-review"),
+            revise: pipeline.createAgentContext("short-revise"),
+            package: pipeline.createAgentContext("short-package"),
+          },
+          ...((shortPayload?.reference ?? params.reference) ? { reference: { text: shortPayload?.reference ?? params.reference! } } : {}),
+          storyId: shortPayload?.storyId ?? params.storyId,
+          chapterCount: shortPayload?.chapters ?? params.chapters,
+          charsPerChapter: shortPayload?.charsPerChapter ?? params.charsPerChapter,
+          language: options.language,
+          cover: shortPayload?.cover ?? params.cover,
+          coverBaseUrl: params.coverBaseUrl,
+          coverEndpoint: params.coverEndpoint,
+          coverModel: params.coverModel,
+          coverSize: params.coverSize,
+          coverApiKeyEnv: params.coverApiKeyEnv,
+          signal: _signal,
+          onProgress: progress,
+        }),
+      );
 
       return textResult(
         [
@@ -1500,7 +1505,7 @@ export function createScriptCreationTool(
     ): Promise<AgentToolResult<unknown>> {
       const progress = (message: string) => onUpdate?.(textResult(message));
       const payload = options.actionPayload?.scriptCreate;
-      const result = await runScriptCreation({
+      const result = await runPipelineWithAbortSignal(pipeline, _signal, () => runScriptCreation({
         projectRoot,
         runtime: pipeline.createAgentContext("script-creation"),
         title: payload?.title ?? params.title,
@@ -1516,7 +1521,7 @@ export function createScriptCreationTool(
         projectId: payload?.projectId ?? params.projectId,
         outDir: payload?.outDir ?? params.outDir,
         onProgress: progress,
-      });
+      }));
 
       return textResult(
         [
@@ -1591,7 +1596,7 @@ export function createStoryboardCreationTool(
     ): Promise<AgentToolResult<unknown>> {
       const progress = (message: string) => onUpdate?.(textResult(message));
       const payload = options.actionPayload?.storyboardCreate;
-      const result = await runStoryboardCreation({
+      const result = await runPipelineWithAbortSignal(pipeline, _signal, () => runStoryboardCreation({
         projectRoot,
         runtime: pipeline.createAgentContext("storyboard-creation"),
         title: payload?.title ?? params.title,
@@ -1608,7 +1613,7 @@ export function createStoryboardCreationTool(
         projectId: payload?.projectId ?? params.projectId,
         outDir: payload?.outDir ?? params.outDir,
         onProgress: progress,
-      });
+      }));
 
       return textResult(
         [
@@ -1688,7 +1693,7 @@ export function createInteractiveFilmCreationTool(
     ): Promise<AgentToolResult<unknown>> {
       const progress = (message: string) => onUpdate?.(textResult(message));
       const payload = options.actionPayload?.interactiveFilmCreate;
-      const result = await runInteractiveFilmCreation({
+      const result = await runPipelineWithAbortSignal(pipeline, _signal, () => runInteractiveFilmCreation({
         projectRoot,
         runtime: pipeline.createAgentContext("interactive-film-creation"),
         title: payload?.title ?? params.title,
@@ -1706,7 +1711,7 @@ export function createInteractiveFilmCreationTool(
         projectId: payload?.projectId ?? params.projectId,
         outDir: payload?.outDir ?? params.outDir,
         onProgress: progress,
-      });
+      }));
 
       return textResult(
         [
@@ -1796,6 +1801,7 @@ export function createGenerateCoverTool(
         coverModel: params.coverModel,
         coverSize: params.coverSize,
         coverApiKeyEnv: params.coverApiKeyEnv,
+        signal: _signal,
       });
       return textResult(
         [
@@ -1868,6 +1874,7 @@ export function createPlayStartTool(
       _signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
+      _signal?.throwIfAborted();
       onUpdate?.(textResult("Starting interactive world..."));
       const playPayload = options.actionPayload?.playStart;
       const store = new PlayStore(projectRoot);
@@ -1936,9 +1943,15 @@ export function createPlayStartTool(
             ctx,
             db,
           });
-          seed = await runner.seedOpening({ sceneText, suggestedActions });
+          seed = await runPipelineWithAbortSignal(
+            pipeline,
+            _signal,
+            () => runner.seedOpening({ sceneText, suggestedActions }),
+          );
+          _signal?.throwIfAborted();
           graph = db.snapshot();
         } catch {
+          _signal?.throwIfAborted();
           // Opening graph seed is a HUD enhancement, not a launch precondition.
           // Starting the world must stay fail-open when a model drifts.
         } finally {

@@ -61,6 +61,7 @@ export interface ShortFictionRunOptions {
   readonly coverModel?: string;
   readonly coverSize?: string;
   readonly coverApiKeyEnv?: string;
+  readonly signal?: AbortSignal;
   readonly onProgress?: (message: string) => void;
 }
 
@@ -91,6 +92,7 @@ export interface ShortFictionCoverOptions {
   readonly coverModel?: string;
   readonly coverSize?: string;
   readonly coverApiKeyEnv?: string;
+  readonly signal?: AbortSignal;
 }
 
 export interface ShortFictionCoverResult {
@@ -336,7 +338,11 @@ async function produceShort(
         coverModel: options.coverModel,
         coverSize: options.coverSize,
         coverApiKeyEnv: options.coverApiKeyEnv,
-      }).catch((error: unknown) => ({ coverError: String(error) }));
+        signal: options.signal,
+      }).catch((error: unknown) => {
+        options.signal?.throwIfAborted();
+        return { coverError: String(error) };
+      });
 
   if (revisionWarning) {
     await writeShortRunStatus(root, baseDir, {
@@ -398,6 +404,7 @@ async function tryReadProjectText(root: string, path: string): Promise<string | 
 export async function generateShortFictionCover(
   options: ShortFictionCoverOptions,
 ): Promise<ShortFictionCoverResult> {
+  options.signal?.throwIfAborted();
   const title = options.title.trim();
   if (!title) {
     throw new Error("title is required for cover generation.");
@@ -426,6 +433,7 @@ export async function generateShortFictionCover(
     coverModel: options.coverModel,
     coverSize: options.coverSize,
     coverApiKeyEnv: options.coverApiKeyEnv,
+    signal: options.signal,
   });
 
   return {
@@ -525,6 +533,7 @@ async function generateCoverArtifact(input: {
   readonly coverModel?: string;
   readonly coverSize?: string;
   readonly coverApiKeyEnv?: string;
+  readonly signal?: AbortSignal;
 }): Promise<{ readonly coverImagePath: string }> {
   return generateCoverImageArtifact({
     ...input,
@@ -543,6 +552,7 @@ async function generateCoverImageArtifact(input: {
   readonly coverModel?: string;
   readonly coverSize?: string;
   readonly coverApiKeyEnv?: string;
+  readonly signal?: AbortSignal;
 }): Promise<{ readonly coverImagePath: string }> {
   const request = await resolveCoverGenerationRequest({
     root: input.root,
@@ -552,7 +562,12 @@ async function generateCoverImageArtifact(input: {
     coverApiKeyEnv: input.coverApiKeyEnv,
   });
   const size = input.coverSize || process.env.INKOS_COVER_SIZE || "1024x1360";
-  const { buffer, extension } = await generateImageFromPrompt(request, buildCoverImagePrompt(input.salesPackage, input.promptMode ?? "short", input.language), size);
+  const { buffer, extension } = await generateImageFromPrompt(
+    request,
+    buildCoverImagePrompt(input.salesPackage, input.promptMode ?? "short", input.language),
+    size,
+    input.signal,
+  );
   const coverPath = join(input.outputDir, extension === "jpg" ? "cover.jpg" : "cover.png");
   await writeBinary(input.root, coverPath, buffer);
   return { coverImagePath: projectPath(coverPath) };
@@ -568,13 +583,14 @@ export async function generateImageFromPrompt(
   request: ShortFictionCoverRequest,
   prompt: string,
   size: string,
+  signal?: AbortSignal,
 ): Promise<{ readonly buffer: Buffer; readonly extension: "png" | "jpg" }> {
   if (request.api === "gemini") {
-    const payload = await generateGeminiCover(request, prompt);
+    const payload = await generateGeminiCover(request, prompt, signal);
     return { buffer: Buffer.from(payload.base64, "base64"), extension: payload.extension };
   }
   if (request.api === "images") {
-    return generateImagesCover(request, prompt, size);
+    return generateImagesCover(request, prompt, size, signal);
   }
 
   const endpoint = request.endpoint ?? `${request.baseUrl.replace(/\/+$/u, "")}/responses`;
@@ -589,6 +605,7 @@ export async function generateImageFromPrompt(
       input: prompt,
       tools: [{ type: "image_generation", size }],
     }),
+    signal,
   });
   const text = await response.text();
   if (!response.ok) {
@@ -689,6 +706,7 @@ async function generateImagesCover(
   request: ShortFictionCoverRequest,
   prompt: string,
   size: string,
+  signal?: AbortSignal,
 ): Promise<{ readonly buffer: Buffer; readonly extension: "png" | "jpg" }> {
   const endpoint = request.endpoint ?? `${request.baseUrl.replace(/\/+$/u, "")}/images/generations`;
   const response = await fetch(endpoint, {
@@ -703,6 +721,7 @@ async function generateImagesCover(
       n: 1,
       size,
     }),
+    signal,
   });
   const text = await response.text();
   if (!response.ok) {
@@ -724,7 +743,7 @@ async function generateImagesCover(
     };
   }
   if (image?.url) {
-    return downloadGeneratedCoverImage(image.url, request.apiKey);
+    return downloadGeneratedCoverImage(image.url, request.apiKey, signal);
   }
   throw new Error("cover generation response did not include image URL or base64 data.");
 }
@@ -752,10 +771,11 @@ export function extractImagesGenerationImage(payload: unknown): (
 async function downloadGeneratedCoverImage(
   url: string,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<{ readonly buffer: Buffer; readonly extension: "png" | "jpg" }> {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal });
   const fallbackResponse = response.status === 401 || response.status === 403
-    ? await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } })
+    ? await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` }, signal })
     : response;
   if (!fallbackResponse.ok) {
     const text = await fallbackResponse.text();
@@ -777,6 +797,7 @@ function coverImageExtension(contentType: string, url: string): "png" | "jpg" {
 async function generateGeminiCover(
   request: ShortFictionCoverRequest,
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<{ readonly base64: string; readonly extension: "png" | "jpg" }> {
   const endpoint = `${request.baseUrl.replace(/\/+$/u, "")}/models/${encodeURIComponent(request.model)}:generateContent?key=${encodeURIComponent(request.apiKey)}`;
   const response = await fetch(endpoint, {
@@ -786,6 +807,7 @@ async function generateGeminiCover(
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
     }),
+    signal,
   });
   const text = await response.text();
   if (!response.ok) {

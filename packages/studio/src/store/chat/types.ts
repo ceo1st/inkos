@@ -103,6 +103,15 @@ export interface SessionResponse {
     readonly messages?: ReadonlyArray<SessionMessage>;
   };
   readonly activeBookId?: string;
+  readonly task?: StudioTaskSnapshot;
+}
+
+export interface StudioTaskSnapshot {
+  readonly version: 1;
+  readonly sessionId: string;
+  readonly requestedIntent: RequestedIntent;
+  readonly execution: ToolExecution;
+  readonly updatedAt: number;
 }
 
 // -- State interfaces --

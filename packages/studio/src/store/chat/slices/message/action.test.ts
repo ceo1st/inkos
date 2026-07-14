@@ -227,4 +227,169 @@ describe("chat message actions", () => {
 
     expect(store.getState().resolvedProposals).toEqual({ "proposal-1": "confirmed" });
   });
+
+  it("does not replace an active local stream while session detail is loading", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "short");
+    const stream = new FakeEventSource(`/api/v1/events?sessionId=${sessionId}`);
+    store.setState((state) => ({
+      sessions: {
+        ...state.sessions,
+        [sessionId]: {
+          ...state.sessions[sessionId]!,
+          isDraft: false,
+          isStreaming: true,
+          stream: stream as unknown as EventSource,
+        },
+      },
+    }));
+    fetchJson.mockClear();
+
+    await store.getState().loadSessionDetail(sessionId);
+
+    expect(fetchJson).not.toHaveBeenCalled();
+    expect(store.getState().sessions[sessionId]).toMatchObject({
+      isStreaming: true,
+      stream,
+    });
+  });
+
+  it("restores and reconnects a running production task when session detail reloads", async () => {
+    const store = createTestStore();
+    fetchJson.mockResolvedValueOnce({
+      session: { sessionId: "short-session-1", bookId: null, sessionKind: "short", title: "雨夜账本" },
+    });
+    const sessionId = await store.getState().createSession(null, "short");
+    fetchJson.mockResolvedValueOnce({
+      session: {
+        sessionId,
+        bookId: null,
+        sessionKind: "short",
+        title: "雨夜账本",
+        messages: [],
+      },
+      task: {
+        version: 1,
+        sessionId,
+        requestedIntent: "short_run",
+        updatedAt: 20,
+        execution: {
+          id: "short-task-1",
+          tool: "short_fiction_run",
+          label: "生成短篇",
+          status: "running",
+          startedAt: 10,
+          logs: ["正在生成大纲"],
+        },
+      },
+    });
+
+    await store.getState().loadSessionDetail(sessionId);
+
+    expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: true });
+    expect(store.getState().sessions[sessionId]?.messages[0]?.toolExecutions?.[0]).toMatchObject({
+      id: "short-task-1",
+      status: "running",
+      logs: ["正在生成大纲"],
+    });
+    expect(fakeEventSources).toHaveLength(1);
+    expect(fakeEventSources[0]?.url).toBe(`/api/v1/events?sessionId=${encodeURIComponent(sessionId)}`);
+
+    fakeEventSources[0]?.emit("task:snapshot", {
+      version: 1,
+      sessionId,
+      requestedIntent: "short_run",
+      updatedAt: 30,
+      execution: {
+        id: "short-task-1",
+        tool: "short_fiction_run",
+        label: "生成短篇",
+        status: "completed",
+        startedAt: 10,
+        completedAt: 30,
+        result: "短篇已完成",
+      },
+    });
+
+    expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: false, stream: null });
+    expect(store.getState().sessions[sessionId]?.messages).toHaveLength(1);
+    expect(store.getState().sessions[sessionId]?.messages[0]?.toolExecutions?.[0]).toMatchObject({
+      id: "short-task-1",
+      status: "completed",
+      result: "短篇已完成",
+    });
+  });
+
+  it("marks the active tool card as stopped without requiring a refresh", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "short");
+    store.getState().loadSessionMessages(sessionId, [{
+      role: "assistant",
+      content: "",
+      timestamp: 10,
+      toolExecutions: [{
+        id: "short-task-1",
+        tool: "short_fiction_run",
+        label: "短篇生产",
+        status: "running",
+        startedAt: 10,
+      }],
+    }]);
+
+    await store.getState().abortSession(sessionId);
+
+    expect(store.getState().sessions[sessionId]?.messages[0]?.toolExecutions?.[0]).toMatchObject({
+      status: "error",
+      error: "已由用户停止",
+      completedAt: expect.any(Number),
+    });
+    expect(fetchJson).toHaveBeenCalledWith(`/sessions/${sessionId}/abort`, { method: "POST" });
+  });
+
+  it("keeps one stopped task card when the aborted agent request later rejects", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "short");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+
+    let rejectAgent!: (error: Error) => void;
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: null, sessionKind: "short" } })
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        rejectAgent = reject;
+      }))
+      .mockResolvedValueOnce({});
+
+    const sent = store.getState().sendMessage(sessionId, "确认生成短篇", { sessionKind: "short" });
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
+    fakeEventSources[0]?.emit("task:snapshot", {
+      sessionId,
+      execution: {
+        id: "short-task-1",
+        tool: "short_fiction_run",
+        label: "短篇生产",
+        status: "running",
+        startedAt: 1_100,
+      },
+    });
+
+    now.mockReturnValue(2_000);
+    await store.getState().abortSession(sessionId);
+    rejectAgent(new Error("This operation was aborted"));
+    await sent;
+
+    const taskExecutions = (store.getState().sessions[sessionId]?.messages ?? [])
+      .flatMap((message) => message.toolExecutions ?? [])
+      .filter((execution) => execution.id === "short-task-1");
+    expect(taskExecutions).toEqual([
+      expect.objectContaining({
+        status: "error",
+        error: "已由用户停止",
+      }),
+    ]);
+    expect(store.getState().sessions[sessionId]?.messages).not.toContainEqual(
+      expect.objectContaining({ content: expect.stringContaining("This operation was aborted") }),
+    );
+    now.mockRestore();
+  });
 });

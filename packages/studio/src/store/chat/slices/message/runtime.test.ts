@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Message, ToolExecution } from "../../types";
-import { createSessionRuntime, deriveResolvedProposals, deserializeMessages, extractErrorMessage, extractToolError, withToolExecutions } from "./runtime";
+import { createSessionRuntime, deriveResolvedProposals, deserializeMessages, extractErrorMessage, extractToolError, markRunningToolsFailed, mergeTaskExecution, withToolExecutions } from "./runtime";
 
 function exec(overrides: Partial<ToolExecution> & { id: string; tool: string }): ToolExecution {
   const { id, tool, ...rest } = overrides;
@@ -227,5 +227,75 @@ describe("withToolExecutions", () => {
     expect(message.toolExecutions?.map((execution) => execution.tool)).toEqual(["script_create"]);
     expect(message.parts?.map((part) => part.type)).toEqual(["tool", "text"]);
     expect(message.content).toBe("完成。");
+  });
+});
+
+describe("mergeTaskExecution", () => {
+  it("adds a persisted running task as a restorable tool card", () => {
+    const execution = exec({
+      id: "short-task-1",
+      tool: "short_fiction_run",
+      status: "running",
+      logs: ["正在生成大纲"],
+      startedAt: 10,
+    });
+
+    const messages = mergeTaskExecution([], execution);
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        role: "assistant",
+        timestamp: 10,
+        toolExecutions: [execution],
+        parts: [{ type: "tool", execution }],
+      }),
+    ]);
+  });
+
+  it("updates the existing task card instead of duplicating it", () => {
+    const running = exec({ id: "task-1", tool: "script_create", status: "running", startedAt: 10 });
+    const completed = exec({
+      id: "task-1",
+      tool: "script_create",
+      status: "completed",
+      result: "完成",
+      startedAt: 10,
+      completedAt: 20,
+    });
+
+    const messages = mergeTaskExecution(mergeTaskExecution([], running), completed);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.toolExecutions).toEqual([completed]);
+    expect(messages[0]?.parts).toEqual([{ type: "tool", execution: completed }]);
+  });
+});
+
+describe("markRunningToolsFailed", () => {
+  it("ends active tool cards immediately when the user stops a task", () => {
+    const running = exec({ id: "task-1", tool: "short_fiction_run", status: "running", startedAt: 10 });
+    const message: Message = {
+      role: "assistant",
+      content: "",
+      timestamp: 10,
+      toolExecutions: [running],
+      parts: [{ type: "tool", execution: running }],
+    };
+
+    const messages = markRunningToolsFailed([message], "已由用户停止", 20);
+
+    expect(messages[0]?.toolExecutions?.[0]).toMatchObject({
+      status: "error",
+      error: "已由用户停止",
+      completedAt: 20,
+    });
+    expect(messages[0]?.parts?.[0]).toMatchObject({
+      type: "tool",
+      execution: {
+        status: "error",
+        error: "已由用户停止",
+        completedAt: 20,
+      },
+    });
   });
 });

@@ -231,6 +231,73 @@ export function deserializeMessages(
     });
 }
 
+export function mergeTaskExecution(
+  messages: ReadonlyArray<Message>,
+  execution: ToolExecution,
+): ReadonlyArray<Message> {
+  let found = false;
+  const next = messages.map((message) => {
+    const hasDirectExecution = message.toolExecutions?.some((item) => item.id === execution.id) ?? false;
+    const hasPartExecution = message.parts?.some(
+      (part) => part.type === "tool" && part.execution.id === execution.id,
+    ) ?? false;
+    if (!hasDirectExecution && !hasPartExecution) return message;
+
+    found = true;
+    const toolExecutions = hasDirectExecution
+      ? message.toolExecutions?.map((item) => item.id === execution.id ? execution : item)
+      : [...(message.toolExecutions ?? []), execution];
+    const parts = hasPartExecution
+      ? message.parts?.map((part) => (
+          part.type === "tool" && part.execution.id === execution.id
+            ? { type: "tool" as const, execution }
+            : part
+        ))
+      : [...(message.parts ?? []), { type: "tool" as const, execution }];
+    return { ...message, toolExecutions, parts };
+  });
+
+  if (found) return next;
+  return [
+    ...next,
+    {
+      role: "assistant",
+      content: "",
+      timestamp: execution.startedAt,
+      toolExecutions: [execution],
+      parts: [{ type: "tool", execution }],
+    },
+  ];
+}
+
+export function markRunningToolsFailed(
+  messages: ReadonlyArray<Message>,
+  error: string,
+  completedAt = Date.now(),
+): ReadonlyArray<Message> {
+  const failExecution = (execution: ToolExecution): ToolExecution => (
+    execution.status === "running" || execution.status === "processing"
+      ? { ...execution, status: "error", error, completedAt }
+      : execution
+  );
+
+  return messages.map((message) => ({
+    ...message,
+    ...(message.toolExecutions
+      ? { toolExecutions: message.toolExecutions.map(failExecution) }
+      : {}),
+    ...(message.parts
+      ? {
+          parts: message.parts.map((part) => (
+            part.type === "tool"
+              ? { ...part, execution: failExecution(part.execution) }
+              : part
+          )),
+        }
+      : {}),
+  }));
+}
+
 function extractSessionToolExecutions(message: SessionMessage): ToolExecution[] | undefined {
   const direct = (message as any).toolExecutions;
   if (Array.isArray(direct)) return direct as ToolExecution[];

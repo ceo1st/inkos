@@ -215,6 +215,41 @@ describe("agent play tools", () => {
     });
   });
 
+  it("runs opening seeding inside the abort scope and does not swallow user cancellation", async () => {
+    const sessionId = "1700000000000-abort1";
+    const controller = new AbortController();
+    const runWithAbortSignal = vi.fn(async (signal: AbortSignal | undefined, task: () => Promise<unknown>) => {
+      signal?.throwIfAborted();
+      return task();
+    });
+    const pipeline = {
+      createAgentContext: vi.fn(() => ({})),
+      runWithAbortSignal,
+    };
+    const seedOpening = vi.fn(async () => null);
+    const tool = createPlayStartTool(pipeline as never, root, sessionId, undefined, {
+      runnerFactory: () => ({ seedOpening }),
+    });
+
+    await tool.execute("tc-start-abort-scope", {
+      title: "雨夜档案",
+      premise: "玩家在县医院档案室值夜班。",
+      initialScene: "档案柜里只有一张无名婴儿照片。",
+    }, controller.signal);
+
+    expect(runWithAbortSignal).toHaveBeenCalledWith(controller.signal, expect.any(Function));
+
+    const cancelledSessionId = "1700000000000-abort2";
+    const cancelled = new AbortController();
+    cancelled.abort();
+    const cancelledTool = createPlayStartTool(pipeline as never, root, cancelledSessionId);
+    await expect(cancelledTool.execute("tc-start-aborted", {
+      title: "不应创建",
+      premise: "这个世界不应在取消后落盘。",
+    }, cancelled.signal)).rejects.toThrow();
+    await expect(new PlayStore(root).loadWorld(cancelledSessionId)).resolves.toBeNull();
+  });
+
   it("advances the play world bound to the session", async () => {
     const sessionId = "1700000000000-bbbb02";
     const store = new PlayStore(root);

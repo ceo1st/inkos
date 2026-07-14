@@ -18,6 +18,8 @@ import {
   deriveResolvedProposals,
   deserializeMessages,
   extractErrorMessage,
+  markRunningToolsFailed,
+  mergeTaskExecution,
   mergeSessionIds,
   updateSession,
   upsertSessionSummary,
@@ -132,17 +134,36 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
   replaceStreamWithError: (sessionId, streamTs, errorMsg) =>
     set((state) => ({
-      sessions: updateSession(state.sessions, sessionId, (session) => ({
-        messages: [
-          ...session.messages.filter(
-            (message) => !(message.timestamp === streamTs && message.role === "assistant"),
-          ),
-          { role: "assistant", content: `\u2717 ${errorMsg}`, timestamp: Date.now() },
-        ],
-        isStreaming: false,
-        lastError: errorMsg,
-        stream: null,
-      })),
+      sessions: updateSession(state.sessions, sessionId, (session) => {
+        const streamMessage = session.messages.find(
+          (message) => message.timestamp === streamTs && message.role === "assistant",
+        );
+        const streamExecutions = [
+          ...(streamMessage?.toolExecutions ?? []),
+          ...(streamMessage?.parts ?? []).flatMap((part) => (
+            part.type === "tool" ? [part.execution] : []
+          )),
+        ];
+        const hasActiveOrFailedTool = streamExecutions.some(
+          (execution) => execution.status === "running"
+            || execution.status === "processing"
+            || execution.status === "error",
+        );
+        const messages = hasActiveOrFailedTool
+          ? markRunningToolsFailed(session.messages, errorMsg)
+          : [
+              ...session.messages.filter(
+                (message) => !(message.timestamp === streamTs && message.role === "assistant"),
+              ),
+              { role: "assistant" as const, content: `\u2717 ${errorMsg}`, timestamp: Date.now() },
+            ];
+        return {
+          messages,
+          isStreaming: false,
+          lastError: errorMsg,
+          stream: null,
+        };
+      }),
     })),
 
   addErrorMessage: (sessionId, errorMsg) =>
@@ -313,11 +334,14 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
   abortSession: async (sessionId) => {
     const session = get().sessions[sessionId];
     session?.stream?.close();
+    const stoppedAt = Date.now();
+    const stoppedMessage = tr("已由用户停止", "Stopped by user");
     set((state) => ({
-      sessions: updateSession(state.sessions, sessionId, () => ({
+      sessions: updateSession(state.sessions, sessionId, (runtime) => ({
         isStreaming: false,
         stream: null,
         lastError: null,
+        messages: markRunningToolsFailed(runtime.messages, stoppedMessage, stoppedAt),
       })),
     }));
     try {
@@ -329,24 +353,28 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
   loadSessionDetail: async (sessionId) => {
     // 草稿会话：磁盘上还没有文件，直接跳过远端拉取。
-    // 本地已有消息：不拉取远端，避免流式中或未持久化的消息被覆盖。
     const existing = get().sessions[sessionId];
     if (existing?.isDraft) return;
-    if (existing && existing.messages.length > 0) return;
+    if (existing?.isStreaming && existing.stream) return;
 
     try {
       const data = await fetchJson<SessionResponse>(`/sessions/${sessionId}`);
       const detail = data.session;
       if (!detail?.sessionId) return;
       const detailSessionId = detail.sessionId;
-      const messages = detail.messages ? deserializeMessages(detail.messages) : [];
+      const persistedMessages = detail.messages ? deserializeMessages(detail.messages) : [];
+      const task = data.task;
+      const taskRunning = task?.execution.status === "running" || task?.execution.status === "processing";
+      let restoredMessages: ReadonlyArray<ReturnType<typeof deserializeMessages>[number]> = persistedMessages;
+      if (task) restoredMessages = mergeTaskExecution(restoredMessages, task.execution);
+      const messages = restoredMessages;
       const restoredResolutions = deriveResolvedProposals(messages);
 
       set((state) => {
         const runtime = state.sessions[detailSessionId];
-        // set 执行到这里可能已有本地消息写入（比如并发 sendMessage），再查一次。
-        if (runtime && runtime.messages.length > 0) return {};
         const nextBookId = detail.bookId ?? runtime?.bookId ?? null;
+        const baseMessages = runtime?.messages.length ? runtime.messages : messages;
+        const nextMessages = task ? mergeTaskExecution(baseMessages, task.execution) : baseMessages;
         return {
           sessions: {
             ...state.sessions,
@@ -362,7 +390,8 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
               sessionKind: detail.sessionKind ?? runtime?.sessionKind,
               playMode: detail.playMode ?? runtime?.playMode,
               title: detail.title ?? runtime?.title ?? null,
-              messages,
+              messages: nextMessages,
+              isStreaming: taskRunning,
             },
           },
           sessionIdsByBook: {
@@ -378,6 +407,22 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           },
         };
       });
+
+      if (taskRunning && task) {
+        const current = get().sessions[detailSessionId];
+        current?.stream?.close();
+        const streamEs = new EventSource(`/api/v1/events?sessionId=${encodeURIComponent(detailSessionId)}`);
+        set((state) => ({
+          sessions: updateSession(state.sessions, detailSessionId, () => ({ stream: streamEs, isStreaming: true })),
+        }));
+        attachSessionStreamListeners({
+          sessionId: detailSessionId,
+          streamTs: task.execution.startedAt,
+          streamEs,
+          set,
+          get,
+        });
+      }
     } catch {
       // ignore
     }
@@ -447,7 +492,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
     get().addUserMessage(sessionId, formatUserMessageForDisplay(userInstruction, attachments));
     session.stream?.close();
-    const streamEs = new EventSource("/api/v1/events");
+    const streamEs = new EventSource(`/api/v1/events?sessionId=${encodeURIComponent(sessionId)}`);
     set((state) => ({
       sessions: updateSession(state.sessions, sessionId, () => ({ stream: streamEs })),
     }));
@@ -577,6 +622,19 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     } catch (error) {
       streamEs.close();
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const failureAlreadyShown = get().sessions[sessionId]?.messages.some((message) => {
+        const executions = [
+          ...(message.toolExecutions ?? []),
+          ...(message.parts ?? []).flatMap((part) => (
+            part.type === "tool" ? [part.execution] : []
+          )),
+        ];
+        return executions.some(
+          (execution) => execution.status === "error"
+            && (execution.completedAt ?? 0) >= streamTs,
+        );
+      }) ?? false;
+      if (failureAlreadyShown) return;
       const hasStream = Boolean(
         get().sessions[sessionId]?.messages.some((message) => message.timestamp === streamTs),
       );

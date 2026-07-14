@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { loadStudioTaskSnapshot, saveStudioTaskSnapshot } from "./task-store.js";
 
 const schedulerStartMock = vi.fn<() => Promise<void>>();
 const initBookMock = vi.fn();
@@ -2860,6 +2861,135 @@ describe("createStudioServer daemon lifecycle", () => {
     );
     await expect(response.json()).resolves.toMatchObject({
       session: { activeBookId: "夜间派送" },
+    });
+  });
+
+  it("persists confirmed production progress before the long-running request completes", async () => {
+    let resolveInitBook!: () => void;
+    initBookMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveInitBook = resolve;
+    }));
+    loadBookSessionMock.mockResolvedValue({
+      sessionId: "long-task-session",
+      bookId: null,
+      sessionKind: "book-create",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const pendingResponse = app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "创建《雨夜旧账》。",
+        sessionId: "long-task-session",
+        sessionKind: "book-create",
+        actionSource: "button",
+        requestedIntent: "create_book",
+        actionPayload: { createBook: { title: "雨夜旧账", language: "zh" } },
+      }),
+    });
+
+    await vi.waitFor(async () => {
+      const task = await loadStudioTaskSnapshot(root, "long-task-session");
+      expect(task?.execution).toMatchObject({
+        tool: "sub_agent",
+        agent: "architect",
+        status: "running",
+      });
+    });
+
+    resolveInitBook();
+    const response = await pendingResponse;
+    expect(response.status).toBe(200);
+    await expect(loadStudioTaskSnapshot(root, "long-task-session")).resolves.toMatchObject({
+      execution: {
+        tool: "sub_agent",
+        agent: "architect",
+        status: "completed",
+        completedAt: expect.any(Number),
+      },
+    });
+  });
+
+  it("persists a terminal error when a confirmed production task fails", async () => {
+    initBookMock.mockRejectedValueOnce(new Error("architect upstream failed"));
+    loadBookSessionMock.mockResolvedValue({
+      sessionId: "failed-task-session",
+      bookId: null,
+      sessionKind: "book-create",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "创建《失败样本》。",
+        sessionId: "failed-task-session",
+        sessionKind: "book-create",
+        actionSource: "button",
+        requestedIntent: "create_book",
+        actionPayload: { createBook: { title: "失败样本", language: "zh" } },
+      }),
+    });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    await expect(loadStudioTaskSnapshot(root, "failed-task-session")).resolves.toMatchObject({
+      execution: {
+        tool: "sub_agent",
+        agent: "architect",
+        status: "error",
+        error: "architect upstream failed",
+        completedAt: expect.any(Number),
+      },
+    });
+  });
+
+  it("returns the persisted task snapshot with session detail after a refresh", async () => {
+    await saveStudioTaskSnapshot(root, {
+      version: 1,
+      sessionId: "agent-session-1",
+      requestedIntent: "short_run",
+      updatedAt: 20,
+      execution: {
+        id: "short-task-1",
+        tool: "short_fiction_run",
+        label: "生成短篇",
+        status: "running",
+        startedAt: 10,
+        logs: ["正在生成大纲"],
+      },
+    });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/sessions/agent-session-1");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      session: { sessionId: "agent-session-1" },
+      task: {
+        sessionId: "agent-session-1",
+        execution: {
+          id: "short-task-1",
+          status: "running",
+          logs: ["正在生成大纲"],
+        },
+      },
     });
   });
 

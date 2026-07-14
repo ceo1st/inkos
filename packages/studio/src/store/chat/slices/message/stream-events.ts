@@ -8,6 +8,7 @@ import {
   extractToolError,
   findRunningToolPart,
   getOrCreateStream,
+  mergeTaskExecution,
   replaceLast,
   resolveToolLabel,
   sessionMatchesEvent,
@@ -241,7 +242,45 @@ export function attachSessionStreamListeners({
 
   streamEs.addEventListener("draft:complete", flushTextDeltas);
   streamEs.addEventListener("draft:error", flushTextDeltas);
-  streamEs.addEventListener("agent:complete", flushTextDeltas);
+
+  const finishSessionStream = (event: MessageEvent) => {
+    try {
+      const data = event.data ? JSON.parse(event.data) : null;
+      if (!sessionMatchesEvent(sessionId, data)) return;
+      flushTextDeltas();
+      progressThrottle.flush();
+      streamEs.close();
+      set((state) => ({
+        sessions: updateSession(state.sessions, sessionId, () => ({
+          isStreaming: false,
+          stream: null,
+        })),
+      }));
+    } catch {
+      // ignore
+    }
+  };
+  streamEs.addEventListener("agent:complete", finishSessionStream);
+  streamEs.addEventListener("agent:error", finishSessionStream);
+
+  streamEs.addEventListener("task:snapshot", (event: MessageEvent) => {
+    try {
+      const data = event.data ? JSON.parse(event.data) : null;
+      if (!sessionMatchesEvent(sessionId, data) || !data?.execution) return;
+      const execution = data.execution as ToolExecution;
+      const running = execution.status === "running" || execution.status === "processing";
+      set((state) => ({
+        sessions: updateSession(state.sessions, sessionId, (runtime) => ({
+          messages: mergeTaskExecution(runtime.messages, execution),
+          isStreaming: running,
+          stream: running ? runtime.stream : null,
+        })),
+      }));
+      if (!running) streamEs.close();
+    } catch {
+      // ignore
+    }
+  });
 
   streamEs.addEventListener("agent:aborted", (event: MessageEvent) => {
     try {

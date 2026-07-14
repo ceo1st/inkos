@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
 import { gzipSync } from "node:zlib";
+import { randomUUID } from "node:crypto";
 import {
   StateManager,
   PipelineRunner,
@@ -123,6 +124,12 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
+import {
+  deleteStudioTaskSnapshot,
+  loadStudioTaskSnapshot,
+  saveStudioTaskSnapshot,
+  type StudioTaskSnapshot,
+} from "./task-store.js";
 
 // -- Studio server language (read per request from the project config's `language`) --
 
@@ -1200,6 +1207,7 @@ interface CollectedToolExec {
   details?: unknown;
   error?: string;
   stages?: Array<{ label: string; status: "pending" | "completed" }>;
+  logs?: string[];
   startedAt: number;
   completedAt?: number;
 }
@@ -1305,9 +1313,12 @@ async function executeConfirmedProductionAction(args: {
   readonly actionPayload?: ActionPayload;
   readonly playMode?: PlayMode;
   readonly language?: StudioLanguage;
+  readonly taskId: string;
+  readonly signal: AbortSignal;
+  readonly onTaskChange: (exec: CollectedToolExec) => Promise<void>;
 }): Promise<CollectedToolExec> {
   const lang = args.language ?? "zh";
-  const id = `direct-${args.requestedIntent}-${Date.now().toString(36)}`;
+  const id = args.taskId;
   const actionPayload = args.actionPayload;
   let tool: ReturnType<typeof createSubAgentTool>
     | ReturnType<typeof createShortFictionRunTool>
@@ -1503,6 +1514,8 @@ async function executeConfirmedProductionAction(args: {
     startedAt: Date.now(),
   };
 
+  await args.onTaskChange(exec);
+
   broadcast("tool:start", {
     sessionId: args.streamSessionId,
     id,
@@ -1515,8 +1528,11 @@ async function executeConfirmedProductionAction(args: {
     const result = await tool.execute(
       id,
       params as never,
-      undefined,
+      args.signal,
       (partialResult: unknown) => {
+        const progress = toolResultText(partialResult, lang);
+        if (progress) exec.logs = [...(exec.logs ?? []), progress].slice(-80);
+        void args.onTaskChange(exec).catch(() => undefined);
         broadcast("tool:update", {
           sessionId: args.streamSessionId,
           tool: tool.name,
@@ -1529,6 +1545,7 @@ async function executeConfirmedProductionAction(args: {
     exec.result = toolResultText(result, lang);
     exec.details = (result as { details?: unknown } | undefined)?.details;
     exec.stages = exec.stages?.map(stage => ({ ...stage, status: "completed" as const }));
+    await args.onTaskChange(exec);
     broadcast("tool:end", {
       sessionId: args.streamSessionId,
       id,
@@ -1544,6 +1561,7 @@ async function executeConfirmedProductionAction(args: {
     exec.status = "error";
     exec.completedAt = Date.now();
     exec.error = message;
+    await args.onTaskChange(exec);
     broadcast("tool:end", {
       sessionId: args.streamSessionId,
       id,
@@ -2460,6 +2478,26 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   const app = new Hono();
   const state = new StateManager(root);
   let cachedConfig = initialConfig;
+  const activeConfirmedTasks = new Map<string, AbortController>();
+
+  const persistConfirmedTask = async (
+    sessionId: string,
+    requestedIntent: RequestedIntent,
+    exec: CollectedToolExec,
+  ): Promise<void> => {
+    const snapshot: StudioTaskSnapshot = {
+      version: 1,
+      sessionId,
+      requestedIntent,
+      updatedAt: Date.now(),
+      execution: {
+        ...exec,
+        ...(exec.stages ? { stages: exec.stages.map((stage) => ({ ...stage })) } : {}),
+        ...(exec.logs ? { logs: [...exec.logs] } : {}),
+      },
+    };
+    await saveStudioTaskSnapshot(root, snapshot);
+  };
 
   app.use("/*", cors());
 
@@ -3069,6 +3107,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       };
       subscribers.add(handler);
       await stream.writeSSE({ event: "ping", data: "" });
+      const sessionId = c.req.query("sessionId");
+      if (sessionId) {
+        const task = await loadStudioTaskSnapshot(root, sessionId);
+        if (task) await stream.writeSSE({ event: "task:snapshot", data: JSON.stringify(task) });
+      }
 
       // Keep alive
       const keepAlive = setInterval(() => {
@@ -4070,9 +4113,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   });
 
   app.get("/api/v1/sessions/:sessionId", async (c) => {
-    const session = await loadBookSession(root, c.req.param("sessionId"));
+    const sessionId = c.req.param("sessionId");
+    const session = await loadBookSession(root, sessionId);
     if (!session) return c.json({ error: "Session not found" }, 404);
-    return c.json({ session });
+    const task = await loadStudioTaskSnapshot(root, sessionId);
+    return c.json({ session, ...(task ? { task } : {}) });
   });
 
   app.post("/api/v1/sessions", async (c) => {
@@ -4130,13 +4175,20 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   });
 
   app.delete("/api/v1/sessions/:sessionId", async (c) => {
-    await deleteBookSession(root, c.req.param("sessionId"));
+    const sessionId = c.req.param("sessionId");
+    await Promise.all([
+      deleteBookSession(root, sessionId),
+      deleteStudioTaskSnapshot(root, sessionId),
+    ]);
     return c.json({ ok: true });
   });
 
   app.post("/api/v1/sessions/:sessionId/abort", async (c) => {
     const sessionId = c.req.param("sessionId");
-    const aborted = abortAgentSession(root, sessionId);
+    const task = await loadStudioTaskSnapshot(root, sessionId);
+    const controller = task ? activeConfirmedTasks.get(task.execution.id) : undefined;
+    controller?.abort();
+    const aborted = abortAgentSession(root, sessionId) || Boolean(controller);
     broadcast("agent:aborted", { sessionId, aborted });
     return c.json({ ok: true, aborted });
   });
@@ -4419,6 +4471,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           });
         }
 
+        const taskId = `direct-${requestedIntent}-${randomUUID()}`;
+        const taskController = new AbortController();
+        activeConfirmedTasks.set(taskId, taskController);
         try {
           const exec = await executeConfirmedProductionAction({
             pipeline,
@@ -4430,6 +4485,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             requestedIntent,
             actionPayload,
             language,
+            taskId,
+            signal: taskController.signal,
+            onTaskChange: (taskExec) => persistConfirmedTask(bookSession.sessionId, requestedIntent, taskExec),
             ...(playMode ? { playMode } : {}),
           });
 
@@ -4501,6 +4559,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             error: { code: failure.code, message: failure.message },
             response: failure.message,
           }, failure.status);
+        } finally {
+          activeConfirmedTasks.delete(taskId);
         }
       }
 
