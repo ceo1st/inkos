@@ -283,6 +283,43 @@ describe("edit controller", () => {
     expect(result.reviewRequired).toBe(true);
   });
 
+  it("updates the index word count when patching chapter text", async () => {
+    const bookDir = join(projectRoot, "books", "harbor");
+    await writeFile(join(bookDir, "chapters", "0005_对账.md"), "# 第5章 对账\n\n她核对了三遍账目。", "utf-8");
+    const chapterIndex = [{
+      number: 5,
+      title: "对账",
+      status: "ready-for-review" as const,
+      wordCount: 999,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      auditIssues: [],
+      lengthWarnings: [],
+    }];
+
+    let savedIndex: ChapterMeta[] = [...chapterIndex];
+    await executeEditTransaction(
+      {
+        bookDir: (bookId) => join(projectRoot, "books", bookId),
+        loadChapterIndex: async () => chapterIndex,
+        saveChapterIndex: async (_bookId, index) => {
+          savedIndex = [...index];
+        },
+      },
+      {
+        kind: "chapter-local-edit",
+        bookId: "harbor",
+        chapterNumber: 5,
+        instruction: "Replace the recount detail",
+        targetText: "三遍账目",
+        replacementText: "五遍账目，又签了名",
+      },
+    );
+
+    // Heading + whitespace stripped: "她核对了五遍账目，又签了名。" → 14 chars.
+    expect(savedIndex[0]?.wordCount).toBe(14);
+  });
+
   it("patches chapter text when the target only differs by whitespace", async () => {
     const bookDir = join(projectRoot, "books", "harbor");
     await writeFile(

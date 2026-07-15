@@ -443,3 +443,37 @@ export function formatFanficCanonMissingError(): string {
 export function formatFanficSourceDirEmptyError(sourcePath: string): string {
   return `No .txt or .md files found in ${sourcePath}（目录 ${sourcePath} 中没有 .txt 或 .md 文件）`;
 }
+
+export function formatChapterSyncNoChanges(language: CliLanguage, checked: number): string {
+  return localize(language, {
+    zh: `已核对 ${checked} 章，index.json 字数无需修正。`,
+    en: `Checked ${checked} chapter(s); index.json word counts already match the files.`,
+  });
+}
+
+export function formatChapterSyncChange(
+  language: CliLanguage,
+  change: { number: number; title: string; previousWordCount: number; wordCount: number },
+  countingMode: "zh_chars" | "en_words",
+): string {
+  const from = formatLengthCount(change.previousWordCount, countingMode);
+  const to = formatLengthCount(change.wordCount, countingMode);
+  return localize(language, {
+    zh: `  第${change.number}章 ${change.title}：${from} → ${to}`,
+    en: `  Chapter ${change.number} ${change.title}: ${from} → ${to}`,
+  });
+}
+
+export function formatChapterSyncSummary(language: CliLanguage, changed: number, checked: number): string {
+  return localize(language, {
+    zh: `已核对 ${checked} 章，修正了 ${changed} 章的 index.json 字数。`,
+    en: `Checked ${checked} chapter(s); corrected ${changed} index.json word count(s).`,
+  });
+}
+
+export function formatChapterSyncMissingFiles(language: CliLanguage, numbers: ReadonlyArray<number>): string {
+  return localize(language, {
+    zh: `警告：index.json 中的第 ${numbers.join("、")} 章找不到对应的章节文件，已跳过。`,
+    en: `Warning: chapter(s) ${numbers.join(", ")} exist in index.json but have no chapter file on disk; skipped.`,
+  });
+}

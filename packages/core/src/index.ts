@@ -509,6 +509,7 @@ export { ScriptCreationAgent, StoryboardCreationAgent, InteractiveFilmCreationAg
 
 // State
 export { BookWriteLockError, StateManager } from "./state/manager.js";
+export { syncChapterWordCounts, type ChapterWordCountChange, type ChapterWordSyncDeps, type ChapterWordSyncResult } from "./state/chapter-word-sync.js";
 export { bootstrapStructuredStateFromMarkdown } from "./state/state-bootstrap.js";
 export { renderCurrentStateProjection, renderHooksProjection, renderChapterSummariesProjection } from "./state/state-projections.js";
 export { applyRuntimeStateDelta, type RuntimeStateSnapshot } from "./state/state-reducer.js";

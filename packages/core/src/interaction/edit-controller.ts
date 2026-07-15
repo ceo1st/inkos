@@ -365,6 +365,7 @@ async function executeChapterLocalEdit(
     await deps.loadChapterIndex(request.bookId),
     request.chapterNumber,
     "Manual text edit requires review before continuation.",
+    roughChapterLength(nextContent),
   );
   await deps.saveChapterIndex(request.bookId, updatedIndex);
 
