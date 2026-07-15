@@ -323,6 +323,48 @@ describe("chat message actions", () => {
     });
   });
 
+  it("restores the transcript user bubble alongside the running task card without duplication", async () => {
+    const store = createTestStore();
+    fetchJson.mockResolvedValueOnce({
+      session: { sessionId: "short-session-2", bookId: null, sessionKind: "short", title: null },
+    });
+    const sessionId = await store.getState().createSession(null, "short");
+    fetchJson.mockResolvedValueOnce({
+      session: {
+        sessionId,
+        bookId: null,
+        sessionKind: "short",
+        title: null,
+        // 任务开始时预写进 transcript 的用户指令
+        messages: [{ role: "user", content: "写一篇雨夜档案馆悬疑短篇。", timestamp: 5 }],
+      },
+      task: {
+        version: 1,
+        sessionId,
+        requestedIntent: "short_run",
+        updatedAt: 20,
+        execution: {
+          id: "short-task-2",
+          tool: "short_fiction_run",
+          label: "生成短篇",
+          status: "running",
+          startedAt: 10,
+        },
+      },
+    });
+
+    await store.getState().loadSessionDetail(sessionId);
+
+    const messages = store.getState().sessions[sessionId]?.messages ?? [];
+    // 用户气泡（来自 transcript）+ 运行中任务卡（来自快照 merge）共存且不重复
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ role: "user", content: "写一篇雨夜档案馆悬疑短篇。" });
+    expect(messages[1]?.toolExecutions?.[0]).toMatchObject({ id: "short-task-2", status: "running" });
+    expect(
+      messages.filter((message) => message.role === "user" && message.content === "写一篇雨夜档案馆悬疑短篇。"),
+    ).toHaveLength(1);
+  });
+
   it("ignores a stale terminal task snapshot replayed onto a new agent stream", async () => {
     const store = createTestStore();
     const sessionId = store.getState().createDraftSession(null, "short");

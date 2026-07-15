@@ -4727,6 +4727,16 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             });
           }
 
+          // 任务开始前先把用户指令作为 user 消息写进 transcript：任务运行期间
+          // 刷新页面时，用户气泡能从 transcript 恢复；并行聊天随后写入的消息
+          // 也会按真实时间排在指令之后。完成/失败路径只追加助手工具消息
+          //（instruction 传空字符串），指令不会写第二遍。
+          await appendManualSessionMessages(root, bookSession.sessionId, [{
+            role: "user",
+            content: instruction,
+            timestamp: Date.now(),
+          }], instruction, { sessionKind });
+
           const exec = await executeConfirmedProductionAction({
             pipeline,
             root,
@@ -4769,6 +4779,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
           const responseText = exec.result ?? pick(surfaceLanguage, "已完成。", "Done.");
           const responseForUser = suppressManualTextForTool(exec) ? "" : responseText;
+          // 指令已在任务开始时写入 transcript，这里只补助手工具消息。
           await appendManualSessionMessages(root, bookSession.sessionId, [
             manualToolAssistantMessage(
               responseText,
@@ -4776,7 +4787,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
               configuredEntry?.service ?? reqService ?? config.llm.provider,
               reqModel ?? config.llm.model,
             ),
-          ], instruction, manualToolAppendOptions(sessionKind, exec));
+          ], "", manualToolAppendOptions(sessionKind, exec));
           await refreshBookSessionFromTranscript();
           broadcast("agent:complete", { instruction, activeBookId: createdBookId ?? agentBookId, sessionId: bookSession.sessionId, sessionKind });
           return c.json({
@@ -4796,6 +4807,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             broadcast("book:error", { bookId: pendingBookId, sessionId: streamSessionId, error: message });
           }
           if (error instanceof ConfirmedActionExecutionError) {
+            // 指令已在任务开始时写入 transcript，失败时同样只补助手工具消息。
             await appendManualSessionMessages(root, bookSession.sessionId, [
               manualToolAssistantMessage(
                 message,
@@ -4803,7 +4815,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
                 configuredEntry?.service ?? reqService ?? config.llm.provider,
                 reqModel ?? config.llm.model,
               ),
-            ], instruction, manualToolAppendOptions(sessionKind, error.exec)).catch(() => undefined);
+            ], "", manualToolAppendOptions(sessionKind, error.exec)).catch(() => undefined);
             await refreshBookSessionFromTranscript().catch(() => undefined);
           }
           broadcast("agent:error", { instruction, activeBookId: agentBookId, sessionId: bookSession.sessionId, sessionKind, error: message });

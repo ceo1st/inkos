@@ -3119,6 +3119,194 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
+  // 下面三个用例把 appendManualSessionMessages / loadBookSession 接回真实实现，
+  // 走真实 transcript 文件验证：确认式生产任务的用户指令必须在任务开始时就
+  // 写进 transcript（而不是任务完成后才补写），完成/失败时只追加助手工具消息。
+  async function wireRealSessionTranscript() {
+    const actual = await vi.importActual<typeof import("@actalk/inkos-core")>("@actalk/inkos-core");
+    appendManualSessionMessagesMock.mockImplementation(actual.appendManualSessionMessages);
+    loadBookSessionMock.mockImplementation(
+      (projectRoot: string, sessionId: string) => actual.loadBookSession(projectRoot, sessionId),
+    );
+    return actual;
+  }
+
+  function hangingShortFictionTool(): { resolveShort: () => void } {
+    const handle = { resolveShort: () => undefined as void };
+    createShortFictionRunToolMock.mockImplementationOnce(() => ({
+      name: "short_fiction_run",
+      execute: vi.fn(() => new Promise((resolve) => {
+        handle.resolveShort = () => resolve({
+          content: [{ type: "text", text: "短篇《雨夜档案》已完成。" }],
+          details: {
+            kind: "short_fiction_created",
+            storyId: "rainy-archive",
+            finalMarkdownPath: "shorts/rainy-archive/final/full.md",
+          },
+        });
+      })),
+    }));
+    return handle;
+  }
+
+  it("persists the production instruction to the transcript at task start", async () => {
+    const actual = await wireRealSessionTranscript();
+    await actual.createAndPersistBookSession(root, null, "instr-short-session", "short");
+    const handle = hangingShortFictionTool();
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const instruction = "写一篇雨夜档案馆悬疑短篇。";
+    const pendingTask = app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction,
+        sessionId: "instr-short-session",
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "short_run",
+        actionPayload: { shortRun: { direction: "雨夜档案馆悬疑", chapters: 12, cover: false } },
+      }),
+    });
+    await vi.waitFor(async () => {
+      const task = await loadStudioTaskSnapshot(root, "instr-short-session");
+      expect(task?.execution.status).toBe("running");
+    });
+
+    // 任务运行中刷新：transcript 里已有这轮用户指令，用户气泡不会消失。
+    const midRun = await app.request("http://localhost/api/v1/sessions/instr-short-session");
+    expect(midRun.status).toBe(200);
+    const midBody = await midRun.json() as {
+      session: { messages: Array<{ role: string; content: string }> };
+      task?: { execution: { status: string } };
+    };
+    expect(midBody.task?.execution.status).toBe("running");
+    expect(midBody.session.messages).toEqual([
+      expect.objectContaining({ role: "user", content: instruction }),
+    ]);
+
+    handle.resolveShort();
+    const response = await pendingTask;
+    expect(response.status).toBe(200);
+
+    // 任务完成后：指令只出现一次，助手工具消息排在其后。
+    const final = await app.request("http://localhost/api/v1/sessions/instr-short-session");
+    const finalBody = await final.json() as {
+      session: { messages: Array<{ role: string; content: string; toolExecutions?: Array<{ tool: string; status: string }> }> };
+    };
+    expect(finalBody.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(
+      finalBody.session.messages.filter((message) => message.role === "user" && message.content === instruction),
+    ).toHaveLength(1);
+    expect(finalBody.session.messages[1]?.toolExecutions?.[0]).toMatchObject({
+      tool: "short_fiction_run",
+      status: "completed",
+    });
+  });
+
+  it("keeps real-time transcript order when a chat round lands during the production task", async () => {
+    const actual = await wireRealSessionTranscript();
+    await actual.createAndPersistBookSession(root, null, "order-short-session", "short");
+    const handle = hangingShortFictionTool();
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const instruction = "写一篇雨夜档案馆悬疑短篇。";
+    const pendingTask = app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction,
+        sessionId: "order-short-session",
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "short_run",
+        actionPayload: { shortRun: { direction: "雨夜档案馆悬疑", chapters: 12, cover: false } },
+      }),
+    });
+    await vi.waitFor(async () => {
+      const task = await loadStudioTaskSnapshot(root, "order-short-session");
+      expect(task?.execution.status).toBe("running");
+    });
+
+    // 任务运行期间插入一轮并行聊天（真实 agent 路径会把聊天消息写进同一份 transcript）。
+    await actual.appendManualSessionMessages(root, "order-short-session", [
+      { role: "user", content: "任务进度如何？", timestamp: Date.now() },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "短篇任务还在运行。" }],
+        api: "anthropic-messages",
+        provider: "openai",
+        model: "gpt-5.4",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      },
+    ] as never, "任务进度如何？", { sessionKind: "short" });
+
+    handle.resolveShort();
+    const response = await pendingTask;
+    expect(response.status).toBe(200);
+
+    const final = await app.request("http://localhost/api/v1/sessions/order-short-session");
+    const finalBody = await final.json() as {
+      session: { messages: Array<{ role: string; content: string }> };
+    };
+    // 重新加载后按真实时间排序：生产指令在并行聊天之前，任务结果在最后。
+    expect(finalBody.session.messages.map((message) => [message.role, message.content])).toEqual([
+      ["user", instruction],
+      ["user", "任务进度如何？"],
+      ["assistant", "短篇任务还在运行。"],
+      ["assistant", expect.stringContaining("短篇《雨夜档案》已完成。")],
+    ]);
+  });
+
+  it("does not duplicate the instruction when the production task fails", async () => {
+    const actual = await wireRealSessionTranscript();
+    await actual.createAndPersistBookSession(root, null, "fail-short-session", "short");
+    createShortFictionRunToolMock.mockImplementationOnce(() => ({
+      name: "short_fiction_run",
+      execute: vi.fn(async () => {
+        throw new Error("short upstream failed");
+      }),
+    }));
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const instruction = "写一篇会失败的短篇。";
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction,
+        sessionId: "fail-short-session",
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "short_run",
+        actionPayload: { shortRun: { direction: "会失败的短篇", chapters: 12, cover: false } },
+      }),
+    });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    const final = await app.request("http://localhost/api/v1/sessions/fail-short-session");
+    const finalBody = await final.json() as {
+      session: { messages: Array<{ role: string; content: string }> };
+    };
+    expect(finalBody.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(
+      finalBody.session.messages.filter((message) => message.role === "user" && message.content === instruction),
+    ).toHaveLength(1);
+    expect(finalBody.session.messages[1]?.content).toContain("short upstream failed");
+  });
+
   it("rejects a second confirmed production task with 409 while one is still running", async () => {
     let resolveInitBook!: () => void;
     initBookMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
@@ -3487,11 +3675,20 @@ describe("createStudioServer daemon lifecycle", () => {
       },
       session: { sessionId: "play-session-1", sessionKind: "play" },
     });
+    // 任务开始时：指令作为 user 消息预写进 transcript。
+    expect(appendManualSessionMessagesMock).toHaveBeenCalledWith(
+      root,
+      "play-session-1",
+      [expect.objectContaining({ role: "user", content: "确认启动旧档案馆之夜。" })],
+      "确认启动旧档案馆之夜。",
+      { sessionKind: "play" },
+    );
+    // 任务完成时：只补助手工具消息，指令不再重复写入。
     expect(appendManualSessionMessagesMock).toHaveBeenCalledWith(
       root,
       "play-session-1",
       expect.any(Array),
-      "确认启动旧档案馆之夜。",
+      "",
       expect.objectContaining({
         sessionKind: "play",
         legacyDisplay: {
@@ -3594,11 +3791,20 @@ describe("createStudioServer daemon lifecycle", () => {
     });
     expect(writeNextChapterMock).toHaveBeenCalledWith("demo-book");
     expect(runAgentSessionMock).not.toHaveBeenCalled();
+    // 任务开始时：指令作为 user 消息预写进 transcript。
+    expect(appendManualSessionMessagesMock).toHaveBeenCalledWith(
+      root,
+      "agent-session-1",
+      [expect.objectContaining({ role: "user", content: "继续" })],
+      "继续",
+      { sessionKind: "book" },
+    );
+    // 任务完成时：只补助手工具消息，指令不再重复写入。
     expect(appendManualSessionMessagesMock).toHaveBeenCalledWith(
       root,
       "agent-session-1",
       expect.any(Array),
-      "继续",
+      "",
       expect.objectContaining({
         sessionKind: "book",
         legacyDisplay: {
@@ -3652,7 +3858,7 @@ describe("createStudioServer daemon lifecycle", () => {
       root,
       "agent-session-1",
       expect.any(Array),
-      "继续",
+      "",
       expect.objectContaining({
         sessionKind: "book",
         legacyDisplay: {
